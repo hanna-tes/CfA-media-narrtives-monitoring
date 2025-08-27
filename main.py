@@ -85,7 +85,7 @@ def main():
         )
 
     # Load data based on selected filters
-    df = load_and_transform_data(selected_country_code, selected_category)
+    df = load_and_transform_data(selected_country_name, selected_category)
     
     if df.empty:
         st.warning("No articles found for the selected filters. Please try a different combination.")
