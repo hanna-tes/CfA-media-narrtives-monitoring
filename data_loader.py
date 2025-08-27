@@ -9,12 +9,21 @@ from config import NEWSAPI_KEY
 
 def get_african_countries():
     """
-    Returns a list of African countries to be used in search queries.
+    Returns a dictionary of African countries and their ISO codes for search queries.
     """
-    return [
-        'All Countries', 'South Africa', 'Nigeria', 'Kenya', 'Ghana', 
-        'Ivory Coast', 'Ethiopia', 'Sudan', 'Burkina Faso', 'Mali', 'Togo'
-    ]
+    return {
+        'All Countries': None,
+        'South Africa': 'za',
+        'Nigeria': 'ng',
+        'Kenya': 'ke',
+        'Ghana': 'gh',
+        'Ivory Coast': 'ci',
+        'Ethiopia': 'et',
+        'Sudan': 'sd',
+        'Burkina Faso': 'bf',
+        'Mali': 'ml',
+        'Togo': 'tg'
+    }
 
 def get_news_categories():
     """
@@ -41,22 +50,19 @@ def assign_fake_labels(articles):
     return articles
 
 @st.cache_data(ttl=3600)  # Cache the data for 1 hour to avoid redundant API calls
-def load_and_transform_data(country, category):
+def load_and_transform_data(country_code, category):
     """
     Loads data from the GNews API, assigns labels, and transforms it into a pandas DataFrame.
-    
-    NOTE: Please update your config.py file to use a GNews API key if you're using GNews.
-    The API key for GNews should be named NEWSAPI_KEY for this script to work.
     """
     base_url = "https://gnews.io/api/v4/search"
     query_string = category
-    if country and country != "All Countries":
-        query_string = f"{category} AND {country} news"
+    if country_code:
+        query_string = f"{category} AND {country_code} news"
         
     params = {
         'q': query_string,
         'lang': 'en',
-        'country': 'any',
+        'country': country_code,
         'apikey': NEWSAPI_KEY
     }
     
