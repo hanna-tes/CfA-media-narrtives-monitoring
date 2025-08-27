@@ -29,7 +29,7 @@ def get_news_categories():
     """
     Returns a list of supported news categories.
     """
-    return ["general", "business", "technology", "health", "science", "sports", "entertainment", "politics"]
+    return ["business", "politics"]
 
 def assign_fake_labels(articles):
     """
