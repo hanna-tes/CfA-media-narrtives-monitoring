@@ -26,6 +26,7 @@ def display_article_card(row):
                  alt="{row['headline']}" 
                  style="width: 100%; max-height: 200px; object-fit: cover; border-radius: 8px;">
             <h4 style="margin-top: 10px; margin-bottom: 5px;">{row['headline']}</h4>
+            <p style="font-size: 14px; color: #555;">{row['text']}</p>
             <p style="font-size: 14px; color: #555;">Published: {row['date_published']}</p>
             <p style="font-size: 14px; font-weight: bold; color: {'red' if row['label'] == 'Pro-Russia' else 'green' if row['label'] == 'Anti-US' else 'blue' if row['label'] == 'Factual' else 'gray'};">
                 Label: {row['label']}
@@ -61,8 +62,9 @@ def main():
         african_countries = get_african_countries()
         selected_country_name = st.selectbox(
             "Select Country",
-            options=african_countries
+            options=list(african_countries.keys())
         )
+        selected_country_code = african_countries[selected_country_name]
         
         # Category filter (now works with countries)
         news_categories = get_news_categories()
@@ -83,7 +85,7 @@ def main():
         )
 
     # Load data based on selected filters
-    df = load_and_transform_data(selected_country_name, selected_category)
+    df = load_and_transform_data(selected_country_code, selected_category)
     
     if df.empty:
         st.warning("No articles found for the selected filters. Please try a different combination.")
