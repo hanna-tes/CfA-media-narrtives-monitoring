@@ -1,136 +1,10 @@
- data_loader.py
-
-import streamlit as st
-import requests
-import pandas as pd
-import random
-from datetime import datetime, timedelta
-from config import NEWSAPI_KEY
-
-def get_african_countries():
-    """
-    Returns a dictionary of selected African countries and their 2-letter ISO codes.
-    NewsAPI free tier supports a limited number of countries.
-    """
-    return {
-        'South Africa': 'za', 'Nigeria': 'ng', 'Egypt': 'eg', 'Morocco': 'ma',
-        'Kenya': 'ke', 'Ghana': 'gh'
-    }
-
-def get_news_categories():
-    """
-    Returns a list of supported news categories.
-    """
-    return ["general", "business", "technology", "health", "science", "sports", "entertainment"]
-
-@st.cache_data(ttl=3600)
-def get_news_sources_for_country(country_code):
-    """
-    Fetches all available news sources for a specified country from NewsAPI.org.
-    
-    Args:
-        country_code (str): The 2-letter ISO code for the country.
-
-    Returns:
-        list: A list of dictionaries, where each dictionary is a news source.
-    """
-    base_url = "https://newsapi.org/v2/top-headlines/sources"
-    params = {
-        'country': country_code,
-        'apiKey': NEWSAPI_KEY
-    }
-
-    try:
-        response = requests.get(base_url, params=params)
-        response.raise_for_status()
-        data = response.json()
-        if data['status'] == 'ok':
-            return data['sources']
-        else:
-            st.error(f"Error from NewsAPI: {data.get('message', 'Unknown error')}")
-            return []
-    except requests.exceptions.RequestException as e:
-        st.error(f"An error occurred while fetching sources: {e}")
-        return []
-
-def assign_fake_labels(articles):
-    """
-    Assigns fake political leanings to each article for dashboard visualization.
-    This simulates the AI analysis from your original dataset.
-
-    Args:
-        articles (list): A list of article dictionaries.
-
-    Returns:
-        list: The same list of articles with new 'label' key.
-    """
-    labels = ["Pro-Russia", "Anti-US", "Factual", "Neutral"]
-    
-    for article in articles:
-        article['label'] = random.choice(labels)
-        
-    return articles
-
-@st.cache_data(ttl=3600)  # Cache the data for 1 hour to avoid redundant API calls
-def load_and_transform_data(country_code, category, source_id=None):
-    """
-    Loads data, assigns labels, and transforms it into a pandas DataFrame.
-    """
-    base_url = "https://newsapi.org/v2/top-headlines"
-    params = {
-        'country': country_code,
-        'category': category,
-        'pageSize': 100, # Max articles per request
-        'apiKey': NEWSAPI_KEY
-    }
-    
-    if source_id:
-        params['sources'] = source_id
-        # The 'category' parameter is not supported when using 'sources'
-        del params['category']
-    
-    try:
-        response = requests.get(base_url, params=params)
-        response.raise_for_status()
-        data = response.json()
-        if data['status'] == 'ok':
-            raw_articles = data['articles']
-        else:
-            st.error(f"Error from NewsAPI: {data.get('message', 'Unknown error')}")
-            raw_articles = []
-    except requests.exceptions.RequestException as e:
-        st.error(f"An error occurred while fetching data: {e}")
-        raw_articles = []
-
-    if not raw_articles:
-        return pd.DataFrame()
-
-    labeled_articles = assign_fake_labels(raw_articles)
-    df_articles = pd.DataFrame(labeled_articles)
-
-    # Clean the DataFrame and format it to match your original structure
-    if not df_articles.empty:
-        df_articles['publishedAt'] = pd.to_datetime(df_articles['publishedAt'])
-        df_articles['date_published'] = df_articles['publishedAt'].dt.date
-        df_articles.rename(columns={'title': 'headline', 'content': 'text'}, inplace=True)
-        
-        # Select and reorder the final columns
-        final_cols = ['headline', 'text', 'url', 'urlToImage', 'date_published', 'label']
-        for col in final_cols:
-            if col not in df_articles.columns:
-                df_articles[col] = None
-        
-        df_articles = df_articles[final_cols]
-    
-    return df_articles
-
-
 # main.py
 
 import streamlit as st
 import pandas as pd
+import altair as alt
 from datetime import datetime, timedelta
-from data_loader import load_and_transform_data, get_african_countries, get_news_categories, get_news_sources_for_country
+from data_loader import load_and_transform_data, get_african_countries, get_news_categories
 
 def display_article_card(row):
     """Displays an article as a card with an image, title, and a link."""
@@ -187,25 +61,14 @@ def main():
         african_countries = get_african_countries()
         selected_country_name = st.selectbox(
             "Select Country",
-            options=list(african_countries.keys())
+            options=african_countries
         )
-        selected_country_code = african_countries[selected_country_name]
-
-        # Get news sources for the selected country
-        sources_list = get_news_sources_for_country(selected_country_code)
-        source_names = {source['name']: source['id'] for source in sources_list}
-        selected_source_name = st.selectbox(
-            "Select News Source",
-            options=["All Sources"] + list(source_names.keys())
-        )
-        selected_source_id = source_names.get(selected_source_name, None)
-
-        # Category filter (this will be ignored if a specific source is selected)
+        
+        # Category filter (now works with countries)
         news_categories = get_news_categories()
         selected_category = st.selectbox(
             "Select Category",
-            options=news_categories,
-            disabled=(selected_source_id is not None)
+            options=news_categories
         )
 
         st.markdown("---")
@@ -220,7 +83,7 @@ def main():
         )
 
     # Load data based on selected filters
-    df = load_and_transform_data(selected_country_code, selected_category, selected_source_id)
+    df = load_and_transform_data(selected_country_name, selected_category)
     
     if df.empty:
         st.warning("No articles found for the selected filters. Please try a different combination.")
@@ -230,13 +93,36 @@ def main():
     filtered_df = df[df['label'].isin(selected_labels)]
     
     # Display key metrics at the top
+    st.subheader("Key Metrics")
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Articles", len(filtered_df))
+    
+    # Calculate unique sources. The GNews API doesn't always provide a source name, so we use the URL to be safe.
     col2.metric("Unique News Sources", filtered_df['url'].nunique())
     
     most_common_label = filtered_df['label'].mode()
     col3.metric("Most Common Leaning", most_common_label[0] if not most_common_label.empty else "N/A")
 
+    st.markdown("---")
+
+    # Bar chart for label distribution
+    st.subheader("Narrative Distribution")
+    if not filtered_df.empty:
+        label_counts = filtered_df['label'].value_counts().reset_index()
+        label_counts.columns = ['label', 'count']
+        
+        chart = alt.Chart(label_counts).mark_bar().encode(
+            x=alt.X('label', axis=None),
+            y=alt.Y('count', title='Number of Articles'),
+            color=alt.Color('label', legend=alt.Legend(title="Political Leaning")),
+            tooltip=['label', 'count']
+        ).properties(
+            title='Article Count by Political Leaning'
+        )
+        st.altair_chart(chart, use_container_width=True)
+    else:
+        st.info("No articles to display in the chart.")
+        
     st.markdown("---")
 
     # Display the filtered articles in a grid layout
