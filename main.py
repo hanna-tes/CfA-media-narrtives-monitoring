@@ -51,7 +51,7 @@ def main():
     
     st.set_page_config(layout="wide")
 
-    st.title("CfA Media Narratives Monitoring 🌍")
+    st.title("CfA Media Narratives Monitoring �")
     st.markdown("Dashboard for monitoring media narratives from African news sources.")
 
     # Sidebar for filtering options
@@ -64,15 +64,16 @@ def main():
             "Select Country",
             options=list(african_countries.keys())
         )
-        selected_country_code = african_countries[selected_country_name]
         
         # Category filter (now works with countries)
         news_categories = get_news_categories()
+        selected_category_index = news_categories.index('politics')
         selected_category = st.selectbox(
             "Select Category",
-            options=news_categories
+            options=news_categories,
+            index=selected_category_index
         )
-
+        
         st.markdown("---")
         st.subheader("Simulated Filters")
         
