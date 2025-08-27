@@ -3,7 +3,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
-from data_loader import load_and_transform_data
+from data_loader import load_and_transform_data, get_african_countries, get_news_categories
 
 def display_article_card(row):
     """Displays an article as a card with an image, title, and a link."""
@@ -49,48 +49,49 @@ def main():
     
     st.set_page_config(layout="wide")
 
-    st.title("Dynamic News Dashboard 📰")
-    st.markdown("Your dashboard now loads live data from **NewsAPI.org**!")
-
-    # Load data using the cached function
-    df = load_and_transform_data()
-    
-    if df.empty:
-        st.warning("No articles found for the selected time period.")
-        return
+    st.title("CfA Media Narratives Monitoring 🌍")
+    st.markdown("Dashboard for monitoring media narratives from African news sources.")
 
     # Sidebar for filtering options
     with st.sidebar:
         st.header("Dashboard Filters")
         
-        # Date range slider
-        default_start_date = datetime.now().date() - timedelta(days=7)
-        default_end_date = datetime.now().date()
-        date_range = st.slider(
-            "Select Date Range",
-            min_value=default_start_date,
-            max_value=default_end_date,
-            value=(default_start_date, default_end_date),
-            format="YYYY-MM-DD"
+        # Country filter
+        african_countries = get_african_countries()
+        selected_country_name = st.selectbox(
+            "Select Country",
+            options=list(african_countries.keys())
         )
+        selected_country_code = african_countries[selected_country_name]
+
+        # Category filter
+        news_categories = get_news_categories()
+        selected_category = st.selectbox(
+            "Select Category",
+            options=news_categories
+        )
+
+        st.markdown("---")
+        st.subheader("Simulated Filters")
         
-        # Multi-select for labels
-        available_labels = sorted(df['label'].unique())
+        # Multi-select for labels (from a fixed list for now)
+        available_labels = ["Pro-Russia", "Anti-US", "Factual", "Neutral"]
         selected_labels = st.multiselect(
             "Filter by Political Leaning",
             options=available_labels,
             default=available_labels
         )
 
-    # Filter the DataFrame based on user selections
+    # Load data based on selected filters
+    df = load_and_transform_data(selected_country_code, selected_category)
+    
+    if df.empty:
+        st.warning("No articles found for the selected country and category. Please try a different combination.")
+        return
+
+    # Filter the DataFrame based on the simulated labels
     filtered_df = df[df['label'].isin(selected_labels)]
     
-    # Filter by date range from the slider
-    filtered_df = filtered_df[
-        (filtered_df['date_published'] >= date_range[0]) & 
-        (filtered_df['date_published'] <= date_range[1])
-    ]
-
     # Display key metrics at the top
     col1, col2, col3 = st.columns(3)
     col1.metric("Total Articles", len(filtered_df))
