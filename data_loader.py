@@ -7,33 +7,43 @@ import random
 from datetime import datetime, timedelta
 from config import NEWSAPI_KEY
 
-def get_articles_from_newsapi(start_date, end_date):
+def get_african_countries():
     """
-    Fetches news articles from the NewsAPI.org Everything endpoint.
+    Returns a dictionary of selected African countries and their 2-letter ISO codes.
+    """
+    return {
+        'South Africa': 'za', 'Nigeria': 'ng', 'Egypt': 'eg', 'Morocco': 'ma'
+    }
+
+def get_news_categories():
+    """
+    Returns a list of supported news categories.
+    """
+    return ["general", "business", "technology", "health", "science", "sports", "entertainment"]
+
+def get_articles_from_newsapi(country, category):
+    """
+    Fetches top headlines from NewsAPI.org for a specified country and category.
 
     Args:
-        start_date (str): The start date for the search in YYYY-MM-DD format.
-        end_date (str): The end date for the search in YYYY-MM-DD format.
+        country (str): The 2-letter ISO code for the country.
+        category (str): The news category.
 
     Returns:
         list: A list of dictionaries, where each dictionary is an article.
     """
-    base_url = "https://newsapi.org/v2/everything"
+    base_url = "https://newsapi.org/v2/top-headlines"
     
-    # We will query for general topics to get a wide range of articles.
-    # You can change this to be more specific.
     params = {
-        'q': 'technology OR business OR world OR politics',
-        'from': start_date,
-        'to': end_date,
-        'sortBy': 'relevancy',
-        'language': 'en',
+        'country': country,
+        'category': category,
+        'pageSize': 100, # Max articles per request
         'apiKey': NEWSAPI_KEY
     }
     
     try:
         response = requests.get(base_url, params=params)
-        response.raise_for_status() # Raises an HTTPError for bad responses (4xx or 5xx)
+        response.raise_for_status() # Raises an HTTPError for bad responses
         data = response.json()
         if data['status'] == 'ok':
             return data['articles']
@@ -58,27 +68,21 @@ def assign_fake_labels(articles):
     labels = ["Pro-Russia", "Anti-US", "Factual", "Neutral"]
     
     for article in articles:
-        # Get a random label and assign it to the article
         article['label'] = random.choice(labels)
         
     return articles
 
 @st.cache_data(ttl=3600)  # Cache the data for 1 hour to avoid redundant API calls
-def load_and_transform_data():
+def load_and_transform_data(country_code, category):
     """
     Loads data, assigns labels, and transforms it into a pandas DataFrame.
     """
-    # Define a date range. We'll get articles from the last 7 days.
-    end_date = datetime.now().strftime('%Y-%m-%d')
-    start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+    raw_articles = get_articles_from_newsapi(country_code, category)
     
-    # Fetch articles from the NewsAPI
-    raw_articles = get_articles_from_newsapi(start_date, end_date)
-    
-    # Assign our simulated AI labels
-    labeled_articles = assign_fake_labels(raw_articles)
+    if not raw_articles:
+        return pd.DataFrame()
 
-    # Transform the list of dictionaries into a DataFrame
+    labeled_articles = assign_fake_labels(raw_articles)
     df_articles = pd.DataFrame(labeled_articles)
 
     # Clean the DataFrame and format it to match your original structure
@@ -86,7 +90,13 @@ def load_and_transform_data():
         df_articles['publishedAt'] = pd.to_datetime(df_articles['publishedAt'])
         df_articles['date_published'] = df_articles['publishedAt'].dt.date
         df_articles.rename(columns={'title': 'headline', 'content': 'text'}, inplace=True)
-        df_articles = df_articles[['headline', 'text', 'url', 'urlToImage', 'date_published', 'label']]
-        df_articles.columns = ['headline', 'text', 'url', 'urlToImage', 'date_published', 'label']
-
+        
+        # Select and reorder the final columns
+        final_cols = ['headline', 'text', 'url', 'urlToImage', 'date_published', 'label']
+        for col in final_cols:
+            if col not in df_articles.columns:
+                df_articles[col] = None
+        
+        df_articles = df_articles[final_cols]
+    
     return df_articles
