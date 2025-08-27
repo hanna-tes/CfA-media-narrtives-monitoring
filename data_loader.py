@@ -50,19 +50,20 @@ def assign_fake_labels(articles):
     return articles
 
 @st.cache_data(ttl=3600)  # Cache the data for 1 hour to avoid redundant API calls
-def load_and_transform_data(country_code, category):
+def load_and_transform_data(country_name, category):
     """
     Loads data from the GNews API, assigns labels, and transforms it into a pandas DataFrame.
     """
     base_url = "https://gnews.io/api/v4/search"
-    query_string = category
-    if country_code:
-        query_string = f"{category} AND {country_code} news"
+    
+    # We will build the query to include both the country and category to overcome the API's country limitations.
+    query_string = f'"{category}"'
+    if country_name and country_name != "All Countries":
+        query_string = f'"{category}" AND "{country_name}"'
         
     params = {
         'q': query_string,
         'lang': 'en',
-        'country': country_code,
         'apikey': NEWSAPI_KEY
     }
     
