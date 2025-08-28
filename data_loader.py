@@ -86,80 +86,64 @@ def assign_labels_and_scores(df_articles):
             
     return df_articles
 
-def fetch_first_paragraph(url):
+def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
     """
-    Fetches the content of a given URL and attempts to extract the first paragraph.
-    Includes error handling for network requests.
+    Fetches content (snippet or image) from a URL with retry mechanism.
     """
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        response = requests.get(url, headers=headers, timeout=10) # 10-second timeout
-        response.raise_for_status() # Raise an HTTPError for bad responses (4xx or 5xx)
-        
-        soup = BeautifulSoup(response.text, 'html.parser')
-        
-        # Common elements where article content might be found
-        article_content_divs = soup.find_all(['article', 'div'], class_=['article-body', 'content-body', 'story-content', 'main-content'])
-        
-        if article_content_divs:
-            for div in article_content_divs:
-                first_p = div.find('p')
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36' # More modern UA
+    }
+    
+    for i in range(retries):
+        try:
+            response = requests.get(url, headers=headers, timeout=15) # Increased timeout
+            response.raise_for_status() # Raise HTTPError for bad responses
+            soup = BeautifulSoup(response.text, 'html.parser')
+
+            if fetch_type == "snippet":
+                article_content_divs = soup.find_all(['article', 'div'], class_=['article-body', 'content-body', 'story-content', 'main-content'])
+                if article_content_divs:
+                    for div in article_content_divs:
+                        first_p = div.find('p')
+                        if first_p and first_p.get_text(strip=True):
+                            return first_p.get_text(strip=True)
+                first_p = soup.find('p')
                 if first_p and first_p.get_text(strip=True):
                     return first_p.get_text(strip=True)
-        
-        # If no specific article div found, try to get the first significant paragraph from the body
-        first_p = soup.find('p')
-        if first_p and first_p.get_text(strip=True):
-            return first_p.get_text(strip=True)
+            elif fetch_type == "image":
+                og_image = soup.find('meta', property='og:image')
+                if og_image and og_image.get('content'):
+                    return og_image['content']
+                twitter_image = soup.find('meta', property='twitter:image')
+                if twitter_image and twitter_image.get('content'):
+                    return twitter_image['content']
+                article_content_divs = soup.find_all(['article', 'div'], class_=['article-body', 'content-body', 'story-content', 'main-content'])
+                for div in article_content_divs:
+                    img = div.find('img')
+                    if img and img.get('src'):
+                        return img['src']
+                img = soup.find('img', {'src': True})
+                if img and img.get('src'):
+                    return img['src']
+            return None # If content not found in this retry
 
-    except requests.exceptions.RequestException as e:
-        st.warning(f"Failed to fetch snippet from {url}: {e}") # Debugging: show warnings
-    except Exception as e:
-        st.warning(f"Error parsing snippet from {url}: {e}") # Debugging: show warnings
-    
-    return None
-
-def fetch_article_image(url):
-    """
-    Fetches the content of a given URL and attempts to extract a prominent image URL.
-    """
-    try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-        }
-        response = requests.get(url, headers=headers, timeout=10)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
-
-        # Try to find Open Graph or Twitter Card image meta tags first
-        og_image = soup.find('meta', property='og:image')
-        if og_image and og_image.get('content'):
-            return og_image['content']
-        
-        twitter_image = soup.find('meta', property='twitter:image')
-        if twitter_image and twitter_image.get('content'):
-            return twitter_image['content']
-
-        # If meta tags not found, look for prominent <img> tags
-        # Prioritize images within common article content containers
-        article_content_divs = soup.find_all(['article', 'div'], class_=['article-body', 'content-body', 'story-content', 'main-content'])
-        for div in article_content_divs:
-            img = div.find('img')
-            if img and img.get('src'):
-                return img['src']
-        
-        # Fallback: get the first large-looking image from the page
-        img = soup.find('img', {'src': True})
-        if img and img.get('src'):
-            return img['src']
-
-    except requests.exceptions.RequestException as e:
-        st.warning(f"Failed to fetch image from {url}: {e}") # Debugging: show warnings
-    except Exception as e:
-        st.warning(f"Error parsing image from {url}: {e}") # Debugging: show warnings
-
+        except requests.exceptions.Timeout:
+            # st.warning(f"Timeout fetching {fetch_type} from {url} (attempt {i+1}/{retries}). Retrying...")
+            time.sleep(delay * (i + 1)) # Exponential backoff
+        except requests.exceptions.RequestException as e:
+            if e.response is not None and e.response.status_code == 404:
+                # st.warning(f"404 Not Found for {fetch_type} from {url}. Skipping.")
+                return None # No need to retry 404
+            elif e.response is not None and e.response.status_code == 403:
+                # st.warning(f"403 Forbidden for {fetch_type} from {url}. Skipping.")
+                return None # No need to retry 403
+            # st.warning(f"Network error fetching {fetch_type} from {url} (attempt {i+1}/{retries}). Retrying...")
+            time.sleep(delay * (i + 1))
+        except Exception as e:
+            # st.warning(f"Error parsing {fetch_type} from {url} (attempt {i+1}/{retries}). Retrying...")
+            time.sleep(delay * (i + 1))
+            
+    # st.warning(f"Failed to fetch {fetch_type} from {url} after {retries} attempts.") # Final warning if all retries fail
     return None
 
 
@@ -213,6 +197,9 @@ def load_and_transform_data(skip_web_scraping=False): # Added skip_web_scraping 
         ).dt.date
         
         # --- Handle Fetching article snippets and images from URLs ---
+        failed_snippets_count = 0
+        failed_images_count = 0
+
         if not skip_web_scraping:
             # Only fetch if 'text' column is empty or doesn't exist AND 'urlToImage' is empty or doesn't exist
             if ('text' not in df_articles.columns or df_articles['text'].isnull().all()) or \
@@ -226,22 +213,29 @@ def load_and_transform_data(skip_web_scraping=False): # Added skip_web_scraping 
                 image_urls = []
                 for i, row in df_articles.iterrows():
                     # Fetch snippet
-                    snippet = fetch_first_paragraph(row['url'])
+                    snippet = fetch_content_with_retry(row['url'], fetch_type="snippet")
                     if snippet:
                         snippets.append(snippet[:500] + "..." if len(snippet) > 500 else snippet)
                     else:
-                        snippets.append(row['headline'][:250] + "..." if pd.notna(row['headline']) else "")
+                        snippets.append(row['headline'][:250] + "..." if pd.notna(row['headline']) else "No snippet available.")
+                        failed_snippets_count += 1
                     
                     # Fetch image
-                    image = fetch_article_image(row['url'])
+                    image = fetch_content_with_retry(row['url'], fetch_type="image")
+                    if not image:
+                        failed_images_count += 1
                     image_urls.append(image)
 
                     progress_bar.progress((i + 1) / total_articles)
-                    time.sleep(0.02)
+                    # No time.sleep here because it's handled by fetch_content_with_retry
                 
                 df_articles['text'] = snippets
                 df_articles['urlToImage'] = image_urls
                 st.success("Finished fetching snippets and images.")
+                if failed_snippets_count > 0:
+                    st.warning(f"Failed to fetch {failed_snippets_count} article snippets due to network errors or website restrictions.")
+                if failed_images_count > 0:
+                    st.warning(f"Failed to fetch {failed_images_count} article images due to network errors or website restrictions.")
             else:
                 # If text and image columns are already populated, just truncate text
                 df_articles['text'] = df_articles['text'].apply(lambda x: str(x)[:500] + "..." if pd.notna(x) and len(str(x)) > 500 else x)
