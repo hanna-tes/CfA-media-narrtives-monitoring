@@ -12,7 +12,7 @@ import os
 from urllib.parse import urlparse
 
 # --- Configuration ---
-LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250828120904.csv"
+LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250828145206.csv"
 
 # Toggle: Set to True to skip web scraping (useful during development)
 SKIP_WEB_SCRAPING = False  # Change to True for faster testing
