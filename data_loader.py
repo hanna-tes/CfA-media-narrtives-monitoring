@@ -3,21 +3,20 @@
 import streamlit as st
 import pandas as pd
 import random
-from datetime import datetime, timedelta
-from pathlib import Path
+import time
+from datetime import datetime
 import requests
 from bs4 import BeautifulSoup
-import time
-import os
 from urllib.parse import urlparse
 
 # --- Configuration ---
+# Replace with your actual raw GitHub CSV URL
 LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250828145206.csv"
 
-# Toggle: Set to True to skip web scraping (useful during development)
-SKIP_WEB_SCRAPING = False  # Change to True for faster testing
+# Toggle: Set to True during development to skip slow web scraping
+SKIP_WEB_SCRAPING = False  # Change to True for fast testing
 
-# --- Keyword definitions ---
+# --- Keyword definitions for labeling ---
 KEYWORD_LABELS = {
     "Pro-Russia": ["russia", "kremlin", "putin", "russian forces", "moscow", "russian influence", "russia partnership"],
     "Anti-West": ["western sanctions", "western interference", "nato", "eu policy", "western powers", "western interests", "western hypocrisy"],
@@ -29,23 +28,14 @@ KEYWORD_LABELS = {
     "Politics": ["government", "election", "parliament", "president", "policy", "diplomacy", "governance", "democracy", "coup", "protest", "legislation", "political party", "reforms"]
 }
 
-ALL_ENTITIES_TO_MONITOR = [
-    'South Africa', 'Nigeria', 'Kenya', 'Ghana', 'Ivory Coast', 'Ethiopia', 
-    'Sudan', 'Burkina Faso', 'Mali', 'Togo', 'Benin',
-    'UAE', 'France', 'Iraq', 'China', 'Israel', 'Saudi Arabia', 'Turkey', 'USA', 'Russia',
-    'militant groups', 'insurgents', 'terrorists', 'extremists'
-]
-
-# Global list of media names
-ALL_MEDIA_NAMES = []
-
+# --- Functions ---
 
 def get_news_categories():
+    """Returns supported categories for filtering."""
     return ["business", "politics", "general"]
 
-
 def assign_labels_and_scores(df_articles):
-    """Assign labels and scores based on keyword matching."""
+    """Assign content-based labels and scores to each article."""
     labels = list(KEYWORD_LABELS.keys()) + ["Factual", "Neutral"]
     for label in labels:
         df_articles[label] = 0.0
@@ -55,10 +45,12 @@ def assign_labels_and_scores(df_articles):
 
         found_strong_labels = False
         for label, keywords in KEYWORD_LABELS.items():
-            score = sum(0.2 for keyword in keywords
-                        if (f" {keyword} " in combined_text or
-                            combined_text.startswith(f"{keyword} ") or
-                            combined_text.endswith(f" {keyword}")))
+            score = 0.0
+            for keyword in keywords:
+                if (f" {keyword} " in combined_text or
+                    combined_text.startswith(f"{keyword} ") or
+                    combined_text.endswith(f" {keyword}")):
+                    score += 0.2
             if score > 0:
                 df_articles.at[index, label] = min(score, 1.0)
                 if score >= 0.3:
@@ -68,15 +60,18 @@ def assign_labels_and_scores(df_articles):
             df_articles.at[index, "Factual"] = 0.7 + random.uniform(-0.1, 0.1)
             df_articles.at[index, "Neutral"] = 0.6 + random.uniform(-0.1, 0.1)
 
+    # Clip scores to max 1.0
     for label in labels:
         df_articles[label] = df_articles[label].clip(upper=1.0)
+
     return df_articles
 
-
 def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
+    """Fetch article snippet or main image with retry logic."""
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
     }
+
     for i in range(retries):
         try:
             response = requests.get(url, headers=headers, timeout=15)
@@ -84,25 +79,53 @@ def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
             soup = BeautifulSoup(response.text, 'html.parser')
 
             if fetch_type == "snippet":
-                selectors = soup.find_all(['article', 'div'], class_=['article-body', 'content-body', 'story-content', 'main-content'])
-                for sel in selectors:
-                    p = sel.find('p')
+                # Look for article content containers
+                containers = soup.find_all(['article', 'div'], class_=[
+                    'article-body', 'content-body', 'story-content', 'main-content',
+                    'entry-content', 'post-content', 'article__body'
+                ])
+                for container in containers:
+                    p = container.find('p')
                     if p and p.get_text(strip=True):
                         return p.get_text(strip=True)[:500] + "..."
+                # Fallback: first <p> on page
                 p = soup.find('p')
                 if p and p.get_text(strip=True):
                     return p.get_text(strip=True)[:500] + "..."
 
             elif fetch_type == "image":
+                # 1. Open Graph image (best)
                 og = soup.find('meta', property='og:image')
                 if og and og.get('content'):
-                    return og['content']
+                    img_url = og['content']
+                    if is_valid_image_url(img_url):
+                        return img_url
+
+                # 2. Twitter Card image
                 tw = soup.find('meta', property='twitter:image')
                 if tw and tw.get('content'):
-                    return tw['content']
+                    img_url = tw['content']
+                    if is_valid_image_url(img_url):
+                        return img_url
+
+                # 3. First image in article body
+                containers = soup.find_all(['article', 'div'], class_=[
+                    'article-body', 'content-body', 'story-content', 'main-content',
+                    'entry-content', 'post-content'
+                ])
+                for container in containers:
+                    img = container.find('img', src=True)
+                    if img:
+                        src = img.get('src') or img.get('data-src') or img.get('data-lazy-src')
+                        if src and is_valid_image_url(src):
+                            return src
+
+                # 4. First image on page (last resort)
                 img = soup.find('img', src=True)
                 if img:
-                    return img['src']
+                    src = img.get('src') or img.get('data-src')
+                    if src and is_valid_image_url(src):
+                        return src
 
             return None
 
@@ -114,12 +137,18 @@ def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
             time.sleep(delay * (i + 1))
         except Exception:
             time.sleep(delay * (i + 1))
+
     return None
 
+def is_valid_image_url(url):
+    """Filter out ad banners, logos, placeholders."""
+    url_lower = url.lower()
+    blocked = ['logo', 'ad.', 'banner', 'sponsor', 'doubleclick', 'placeholder', 'icon', 'gif']
+    return all(word not in url_lower for word in blocked)
 
 @st.cache_data(ttl=3600)  # Cache for 1 hour
 def load_raw_data():
-    """Load and preprocess raw data without any web scraping."""
+    """Load and clean raw data from URL (no scraping)."""
     try:
         df = pd.read_csv(LOCAL_DATA_FILE)
         df.rename(columns={
@@ -128,133 +157,146 @@ def load_raw_data():
             'media_name': 'source_name'
         }, inplace=True)
 
+        # Convert date
         df['date_published'] = pd.to_datetime(
             df['date_published'], format="%Y-%m-%d %H:%M:%S.%f", errors='coerce'
         ).dt.date
 
         # Ensure required columns exist
-        for col in ['headline', 'url', 'source_name']:
+        for col in ['headline', 'url', 'source_name', 'text', 'urlToImage']:
             if col not in df.columns:
                 df[col] = None
 
-        # Initialize text and image columns if missing
-        if 'text' not in df.columns:
-            df['text'] = None
-        if 'urlToImage' not in df.columns:
-            df['urlToImage'] = None
-
         return df.reset_index(drop=True)
     except Exception as e:
-        st.error(f"Error loading data: {e}")
+        st.error(f"❌ Error loading data: {e}")
         return pd.DataFrame()
-
-
-def enrich_articles_with_scraping(df):
-    """Fetch missing snippets and images. Does NOT use @st.cache."""
-    if SKIP_WEB_SCRAPING:
-        st.info("Web scraping skipped (SKIP_WEB_SCRAPING=True). Using headlines as fallback.")
-        df['text'] = df['headline'].apply(lambda x: f"{str(x)[:250]}..." if pd.notna(x) else "No snippet available.")
-        df['urlToImage'] = None
-        return df
-
-    # Only scrape where needed
-    needs_snippet = df['text'].isna() | (df['text'].eq("")) | (df['text'].eq("None"))
-    needs_image = df['urlToImage'].isna() | (df['urlToImage'].eq("")) | (df['urlToImage'].eq("None"))
-
-    if not (needs_snippet.any() or needs_image.any()):
-        st.info("All articles already have text and images. Skipping scraping.")
-        return df
-
-    st.info("Starting to fetch article content and images. This may take a few minutes...")
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-
-    total = len(df)
-    snippets = df['text'].tolist()
-    images = df['urlToImage'].tolist()
-    failed_snippets = 0
-    failed_images = 0
-
-    for i, row in df.iterrows():
-        url = row['url']
-        status_text.text(f"Processing ({i+1}/{total}): {url[:50]}...")
-
-        if needs_snippet.iloc[i]:
-            snippet = fetch_content_with_retry(url, "snippet")
-            snippets[i] = snippet or (str(row['headline'])[:250] + "..." if pd.notna(row['headline']) else "No snippet.")
-            if not snippet:
-                failed_snippets += 1
-
-        if needs_image.iloc[i]:
-            image = fetch_content_with_retry(url, "image")
-            images[i] = image
-            if not image:
-                failed_images += 1
-
-        progress_bar.progress((i + 1) / total)
-
-    df['text'] = snippets
-    df['urlToImage'] = images
-
-    progress_bar.empty()
-    status_text.empty()
-
-    st.success("Content enrichment complete!")
-    if failed_snippets:
-        st.warning(f"Failed to fetch snippets for {failed_snippets} articles.")
-    if failed_images:
-        st.warning(f"Failed to fetch images for {failed_images} articles.")
-
-    return df
-
 
 @st.cache_data(ttl=3600)
 def get_media_names_cached():
-    """Cached list of media names."""
+    """Cached list of media names for filter."""
     df = load_raw_data()
     if 'source_name' in df.columns:
         return sorted(df['source_name'].dropna().unique().tolist())
     return []
 
-
 def get_media_names_for_filter():
-    global ALL_MEDIA_NAMES
-    if not ALL_MEDIA_NAMES:
-        ALL_MEDIA_NAMES = get_media_names_cached()
-    return ALL_MEDIA_NAMES
+    """Get all unique media names."""
+    return get_media_names_cached()
 
+def enrich_articles_with_scraping(df):
+    """Enrich articles with snippets and images using resume support."""
+    if SKIP_WEB_SCRAPING:
+        st.info("⏭️ Web scraping skipped (SKIP_WEB_SCRAPING=True). Using fallbacks.")
+        df['text'] = df['text'].fillna(
+            df['headline'].apply(lambda x: f"{str(x)[:250]}..." if pd.notna(x) else "No snippet.")
+        )
+        df['urlToImage'] = df['urlToImage'].fillna(None)
+        return df
+
+    # Initialize session state for persistent caching across reruns
+    if 'scraped_data' not in st.session_state:
+        st.session_state.scraped_data = {
+            'url_to_text': {},
+            'url_to_image': {},
+            'failed': {'snippet': set(), 'image': set()}
+        }
+
+    scraped_text = st.session_state.scraped_data['url_to_text']
+    scraped_image = st.session_state.scraped_data['url_to_image']
+    failed_snippets = st.session_state.scraped_data['failed']['snippet']
+    failed_images = st.session_state.scraped_data['failed']['image']
+
+    # Identify URLs that still need processing
+    urls_to_fetch = []
+    for _, row in df.iterrows():
+        url = row['url']
+        needs_text = pd.isna(row['text']) or not str(row['text']).strip()
+        needs_image = pd.isna(row['urlToImage']) or not str(row['urlToImage']).strip()
+
+        if (needs_text and url not in scraped_text and url not in failed_snippets) or \
+           (needs_image and url not in scraped_image and url not in failed_images):
+            urls_to_fetch.append(url)
+
+    if not urls_to_fetch:
+        st.info("✅ All articles already processed or previously failed. Using cached results.")
+        df['text'] = df['url'].map(scraped_text).fillna(df['text'])
+        df['urlToImage'] = df['url'].map(scraped_image).fillna(df['urlToImage'])
+        return df
+
+    st.info(f"🔁 Fetching content for {len(urls_to_fetch)} articles. This may take a while...")
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    total = len(urls_to_fetch)
+    processed = 0
+
+    for url in urls_to_fetch:
+        status_text.text(f"📄 Processing: {url[:60]}...")
+
+        # Fetch snippet
+        if url not in scraped_text and url not in failed_snippets:
+            snippet = fetch_content_with_retry(url, "snippet")
+            if snippet:
+                scraped_text[url] = snippet
+            else:
+                failed_snippets.add(url)
+                # Fallback: use headline
+                scraped_text[url] = df[df['url'] == url]['headline'].iloc[0][:250] + "..." \
+                    if not df[df['url'] == url].empty else "No snippet."
+
+        # Fetch image
+        if url not in scraped_image and url not in failed_images:
+            image = fetch_content_with_retry(url, "image")
+            if image:
+                scraped_image[url] = image
+            else:
+                failed_images.add(url)
+
+        processed += 1
+        progress_bar.progress(processed / total)
+
+    # Save back to session state
+    st.session_state.scraped_data['url_to_text'] = scraped_text
+    st.session_state.scraped_data['url_to_image'] = scraped_image
+
+    # Apply to DataFrame
+    df['text'] = df['url'].map(scraped_text).fillna(df['text'])
+    df['urlToImage'] = df['url'].map(scraped_image).fillna(df['urlToImage'])
+
+    progress_bar.empty()
+    status_text.empty()
+    st.success("🎉 Content enrichment complete!")
+
+    if failed_snippets:
+        st.warning(f"⚠️ Failed to fetch snippets for {len(failed_snippets)} articles.")
+    if failed_images:
+        st.warning(f"⚠️ Failed to fetch images for {len(failed_images)} articles.")
+
+    return df
 
 def load_and_transform_data():
     """
-    Main entry point. Loads, enriches, labels data.
-    Uses session_state to avoid re-scraping on every rerun.
+    Main function: loads, enriches, labels data.
+    Uses st.session_state to avoid restarting.
     """
-
-    # Use session state to persist enriched data across reruns
-    if 'enriched_df' not in st.session_state:
-        st.session_state.enriched_df = None
-
-    # Step 1: Load raw data
+    # Load raw data (cached)
     df = load_raw_data()
     if df.empty:
         return pd.DataFrame()
 
-    # Step 2: Enrich only if not already done
-    if st.session_state.enriched_df is None:
-        df = enrich_articles_with_scraping(df)
-        st.session_state.enriched_df = df  # Save to session state
-    else:
-        df = st.session_state.enriched_df
+    # Enrich with scraping (with resume support)
+    df = enrich_articles_with_scraping(df.copy())
 
-    # Step 3: Assign labels (fast operation)
-    df = assign_labels_and_scores(df.copy())
+    # Assign labels
+    df = assign_labels_and_scores(df)
 
-    # Final column selection
+    # Final columns
     all_labels = ["Factual", "Neutral", "Pro-Russia", "Anti-West", "Anti-France", "Sensationalist", "Anti-US", "Opinion"]
     final_cols = ['headline', 'text', 'url', 'urlToImage', 'date_published', 'source_name'] + all_labels
+
     for col in final_cols:
         if col not in df.columns:
             df[col] = None
-    df = df[final_cols]
 
-    return df
+    return df[df[final_cols]]
