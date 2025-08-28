@@ -11,7 +11,7 @@ import time # For adding a delay between requests
 
 # Define the path to your data directory (now a URL)
 # IMPORTANT: Replace with your actual GitHub raw CSV URL
-LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250828145206.csv" 
+LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250828120904.csv" # Example: "https://raw.githubusercontent.com/your_username/your_repo/main/data/benin-or-benin-or-be-all-story-urls-20250808061215.csv"
 
 # --- Keyword definitions for content-driven label assignment ---
 KEYWORD_LABELS = {
@@ -58,13 +58,15 @@ def assign_labels_and_scores(df_articles):
         df_articles[label] = 0.0
 
     for index, row in df_articles.iterrows():
-        combined_text = f"{str(row['headline']).lower()} {str(row['text']).lower()}"
+        # Ensure 'text' and 'headline' are strings before lowercasing
+        combined_text = f"{str(row['headline'] or '').lower()} {str(row['text'] or '').lower()}"
         
         found_strong_labels = False
         for label, keywords in KEYWORD_LABELS.items():
             score = 0.0
             for keyword in keywords:
                 # Use word boundaries for more precise matching (e.g., "us " not "business")
+                # Also handle cases where keyword is at the very beginning or end of the text
                 if f" {keyword} " in combined_text or combined_text.startswith(f"{keyword} ") or combined_text.endswith(f" {keyword}"):
                     score += 0.2 
             
@@ -113,9 +115,9 @@ def fetch_first_paragraph(url):
             return first_p.get_text(strip=True)
 
     except requests.exceptions.RequestException as e:
-        pass
+        st.warning(f"Failed to fetch snippet from {url}: {e}") # Debugging: show warnings
     except Exception as e:
-        pass
+        st.warning(f"Error parsing snippet from {url}: {e}") # Debugging: show warnings
     
     return None
 
@@ -153,10 +155,10 @@ def fetch_article_image(url):
         if img and img.get('src'):
             return img['src']
 
-    except requests.exceptions.RequestException:
-        pass
-    except Exception:
-        pass
+    except requests.exceptions.RequestException as e:
+        st.warning(f"Failed to fetch image from {url}: {e}") # Debugging: show warnings
+    except Exception as e:
+        st.warning(f"Error parsing image from {url}: {e}") # Debugging: show warnings
 
     return None
 
@@ -187,9 +189,9 @@ def get_media_names_for_filter():
     return ALL_MEDIA_NAMES
 
 @st.cache_data(ttl=3600)  # Cache the data for 1 hour to avoid re-loading file unnecessarily
-def load_and_transform_data():
+def load_and_transform_data(skip_web_scraping=False): # Added skip_web_scraping parameter
     """
-    Loads data from the GitHub raw CSV URL, fetches article snippets and images,
+    Loads data from the GitHub raw CSV URL, optionally fetches article snippets and images,
     assigns labels and scores, and transforms it into a pandas DataFrame.
     """
     try:
@@ -210,38 +212,43 @@ def load_and_transform_data():
             errors='coerce'               # Convert unparseable dates to NaT instead of erroring
         ).dt.date
         
-        # --- Fetch article snippets and images from URLs ---
-        # Only fetch if 'text' column is empty or doesn't exist AND 'urlToImage' is empty or doesn't exist
-        if ('text' not in df_articles.columns or df_articles['text'].isnull().all()) or \
-           ('urlToImage' not in df_articles.columns or df_articles['urlToImage'].isnull().all()):
-            
-            st.info("Fetching article snippets and images from URLs. This may take a moment...")
-            progress_bar = st.progress(0)
-            total_articles = len(df_articles)
-            
-            snippets = []
-            image_urls = []
-            for i, row in df_articles.iterrows():
-                # Fetch snippet
-                snippet = fetch_first_paragraph(row['url'])
-                if snippet:
-                    snippets.append(snippet[:500] + "..." if len(snippet) > 500 else snippet)
-                else:
-                    snippets.append(row['headline'][:250] + "..." if pd.notna(row['headline']) else "")
+        # --- Handle Fetching article snippets and images from URLs ---
+        if not skip_web_scraping:
+            # Only fetch if 'text' column is empty or doesn't exist AND 'urlToImage' is empty or doesn't exist
+            if ('text' not in df_articles.columns or df_articles['text'].isnull().all()) or \
+               ('urlToImage' not in df_articles.columns or df_articles['urlToImage'].isnull().all()):
                 
-                # Fetch image
-                image = fetch_article_image(row['url'])
-                image_urls.append(image)
+                st.info("Fetching article snippets and images from URLs. This may take a moment...")
+                progress_bar = st.progress(0)
+                total_articles = len(df_articles)
+                
+                snippets = []
+                image_urls = []
+                for i, row in df_articles.iterrows():
+                    # Fetch snippet
+                    snippet = fetch_first_paragraph(row['url'])
+                    if snippet:
+                        snippets.append(snippet[:500] + "..." if len(snippet) > 500 else snippet)
+                    else:
+                        snippets.append(row['headline'][:250] + "..." if pd.notna(row['headline']) else "")
+                    
+                    # Fetch image
+                    image = fetch_article_image(row['url'])
+                    image_urls.append(image)
 
-                progress_bar.progress((i + 1) / total_articles)
-                time.sleep(0.02)
-            
-            df_articles['text'] = snippets
-            df_articles['urlToImage'] = image_urls
-            st.success("Finished fetching snippets and images.")
+                    progress_bar.progress((i + 1) / total_articles)
+                    time.sleep(0.02)
+                
+                df_articles['text'] = snippets
+                df_articles['urlToImage'] = image_urls
+                st.success("Finished fetching snippets and images.")
+            else:
+                # If text and image columns are already populated, just truncate text
+                df_articles['text'] = df_articles['text'].apply(lambda x: str(x)[:500] + "..." if pd.notna(x) and len(str(x)) > 500 else x)
         else:
-            # If text and image columns are already populated, just truncate text
-            df_articles['text'] = df_articles['text'].apply(lambda x: str(x)[:500] + "..." if pd.notna(x) and len(str(x)) > 500 else x)
+            # If skipping web scraping, ensure 'text' and 'urlToImage' are set to a fallback
+            df_articles['text'] = df_articles['headline'].apply(lambda x: str(x)[:250] + "..." if pd.notna(x) else "No snippet (web scraping skipped).")
+            df_articles['urlToImage'] = None # Placeholder will be used by main.py
 
 
         # Assign content-driven labels and scores
@@ -260,6 +267,9 @@ def load_and_transform_data():
     
         return df_articles
 
+    except requests.exceptions.RequestException as e:
+        st.error(f"Network error loading data from URL: {LOCAL_DATA_FILE}. Please check your internet connection and the URL. Error: {e}")
+        return pd.DataFrame()
     except Exception as e:
-        st.error(f"Error loading or processing data from URL: {e}")
+        st.error(f"Error loading or processing data from URL: {LOCAL_DATA_FILE}. Please check your CSV format and the URL. Error: {e}")
         return pd.DataFrame()
