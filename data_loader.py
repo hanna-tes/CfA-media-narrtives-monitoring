@@ -1,105 +1,266 @@
 # data_loader.py
 
 import streamlit as st
-import requests
 import pandas as pd
 import random
 from datetime import datetime, timedelta
-from config import NEWSAPI_KEY
+from pathlib import Path
+import requests
+from bs4 import BeautifulSoup
+import time # For adding a delay between requests
 
-def get_african_countries():
-    """
-    Returns a dictionary of African countries and their ISO codes for search queries.
-    """
-    return {
-        'All Countries': None,
-        'South Africa': 'za',
-        'Nigeria': 'ng',
-        'Kenya': 'ke',
-        'Ghana': 'gh',
-        'Ivory Coast': 'ci',
-        'Ethiopia': 'et',
-        'Sudan': 'sd',
-        'Burkina Faso': 'bf',
-        'Mali': 'ml',
-        'Togo': 'tg'
-    }
+# Define the path to your data directory
+DATA_DIR = Path("data/")
+LOCAL_DATA_FILE = DATA_DIR / "benin-or-benin-or-be-all-story-urls-20250808061215.csv"
+
+# --- Keyword definitions for content-driven label assignment ---
+KEYWORD_LABELS = {
+    "Pro-Russia": ["russia", "kremlin", "putin", "russian forces", "moscow", "russian influence", "russia partnership"],
+    "Anti-West": ["western sanctions", "western interference", "nato", "eu policy", "western powers", "western interests", "western hypocrisy"],
+    "Anti-France": ["france colonialism", "french influence", "paris policy", "french troops", "francafrique", "anti-france sentiment", "french withdrawal"],
+    "Anti-US": ["anti-american", "us aggression", "us interference", "us sanctions", "american hegemony", "us imperialism", "us military presence", "us meddling", "us failed policy", "us-led", "criticism of us", "condemn us", "us withdraw"],
+    "Sensationalist": ["shocking", "urgent", "breaking news", "exclusive", "bombshell", "crisis", "scandal", "explosive", "reveal", "warning", "catastrophe", "unprecedented"],
+    "Opinion": ["opinion", "analysis", "commentary", "viewpoint", "perspective", "column", "editorial", "blog", "critique"],
+    "Business": ["economy", "business", "market", "finance", "investment", "trade", "growth", "industry", "currency", "revenue", "jobs", "commerce", "development"],
+    "Politics": ["government", "election", "parliament", "president", "policy", "diplomacy", "governance", "democracy", "coup", "protest", "legislation", "political party", "reforms"]
+    # Factual and Neutral will often be default or assigned if other strong labels aren't found
+}
+
+# Combine all entities to monitor for potential country-based filtering in articles (not used as direct filter now)
+ALL_ENTITIES_TO_MONITOR = [
+    'South Africa', 'Nigeria', 'Kenya', 'Ghana', 'Ivory Coast', 'Ethiopia', 
+    'Sudan', 'Burkina Faso', 'Mali', 'Togo', 'Benin',
+    'UAE', 'France', 'Iraq', 'China', 'Israel', 'Saudi Arabia', 'Turkey', 'USA', 'Russia',
+    'militant groups', 'insurgents', 'terrorists', 'extremists'
+]
+
 
 def get_news_categories():
     """
     Returns a list of supported news categories.
+    These are for filtering purposes in the dashboard.
     """
-    return ["business", "politics"]
+    # Categories are focused as per previous request
+    return ["business", "politics", "general"] 
 
-def assign_fake_labels(articles):
+def assign_labels_and_scores(df_articles):
     """
-    Assigns fake political leanings to each article for dashboard visualization.
-    This simulates the AI analysis from your original dataset.
+    Assigns political leanings and scores to each article based on keyword presence in content.
 
     Args:
-        articles (list): A list of article dictionaries.
+        df_articles (pd.DataFrame): DataFrame of articles.
 
     Returns:
-        list: The same list of articles with new 'label' key.
+        pd.DataFrame: The DataFrame with new 'label' and score columns for each defined label.
     """
-    labels = ["Pro-Russia", "Anti-US", "Factual", "Neutral"]
+    labels = ["Factual", "Neutral", "Pro-Russia", "Anti-West", "Anti-France", "Sensationalist", "Anti-US", "Opinion"]
     
-    for article in articles:
-        article['label'] = random.choice(labels)
-        
-    return articles
+    # Initialize all label columns to 0.0
+    for label in labels:
+        df_articles[label] = 0.0
 
-@st.cache_data(ttl=3600)  # Cache the data for 1 hour to avoid redundant API calls
-def load_and_transform_data(country_name, category):
-    """
-    Loads data from the GNews API, assigns labels, and transforms it into a pandas DataFrame.
-    """
-    base_url = "https://gnews.io/api/v4/search"
-    
-    # We will build the query to include both the country and category to overcome the API's country limitations.
-    query_string = f'"{category}"'
-    if country_name and country_name != "All Countries":
-        query_string = f'"{category}" AND "{country_name}"'
+    for index, row in df_articles.iterrows():
+        combined_text = f"{str(row['headline']).lower()} {str(row['text']).lower()}"
         
-    params = {
-        'q': query_string,
-        'lang': 'en',
-        'apikey': NEWSAPI_KEY
-    }
-    
+        found_strong_labels = False
+        for label, keywords in KEYWORD_LABELS.items():
+            score = 0.0
+            for keyword in keywords:
+                # Use word boundaries for more precise matching (e.g., "us " not "business")
+                if f" {keyword} " in combined_text or combined_text.startswith(f"{keyword} ") or combined_text.endswith(f" {keyword}"):
+                    score += 0.2 
+            
+            if score > 0:
+                df_articles.at[index, label] = min(score, 1.0)
+                if score >= 0.3: # Consider a label "found" if score is reasonable
+                    found_strong_labels = True
+        
+        # If no specific labels were strongly matched, assign a higher Factual/Neutral score
+        if not found_strong_labels:
+            df_articles.at[index, "Factual"] = 0.7 + random.uniform(-0.1, 0.1) # Default to factual
+            df_articles.at[index, "Neutral"] = 0.6 + random.uniform(-0.1, 0.1) # Default to neutral
+
+    # Ensure scores don't exceed 1.0 (clipping again just in case)
+    for label in labels:
+        df_articles[label] = df_articles[label].clip(upper=1.0)
+            
+    return df_articles
+
+def fetch_first_paragraph(url):
+    """
+    Fetches the content of a given URL and attempts to extract the first paragraph.
+    Includes error handling for network requests.
+    """
     try:
-        response = requests.get(base_url, params=params)
-        response.raise_for_status()
-        data = response.json()
-        if 'articles' in data:
-            raw_articles = data['articles']
-        else:
-            st.error(f"Error from GNews: {data.get('errors', 'Unknown error')}")
-            raw_articles = []
-    except requests.exceptions.RequestException as e:
-        st.error(f"An error occurred while fetching data from GNews: {e}")
-        raw_articles = []
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=10) # 10-second timeout
+        response.raise_for_status() # Raise an HTTPError for bad responses (4xx or 5xx)
+        
+        soup = BeautifulSoup(response.text, 'html.parser')
+        
+        # Common elements where article content might be found
+        article_content_divs = soup.find_all(['article', 'div'], class_=['article-body', 'content-body', 'story-content', 'main-content'])
+        
+        if article_content_divs:
+            for div in article_content_divs:
+                first_p = div.find('p')
+                if first_p and first_p.get_text(strip=True):
+                    return first_p.get_text(strip=True)
+        
+        # If no specific article div found, try to get the first significant paragraph from the body
+        first_p = soup.find('p')
+        if first_p and first_p.get_text(strip=True):
+            return first_p.get_text(strip=True)
 
-    if not raw_articles:
+    except requests.exceptions.RequestException as e:
+        # st.warning(f"Could not fetch content from {url}: {e}") # Suppress this warning for cleaner output
+        pass
+    except Exception as e:
+        # st.warning(f"Error parsing content from {url}: {e}") # Suppress this warning for cleaner output
+        pass
+    
+    return None # Return None if parsing fails
+
+def fetch_article_image(url):
+    """
+    Fetches the content of a given URL and attempts to extract a prominent image URL.
+    """
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        }
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.text, 'html.parser')
+
+        # Try to find Open Graph or Twitter Card image meta tags first
+        og_image = soup.find('meta', property='og:image')
+        if og_image and og_image.get('content'):
+            return og_image['content']
+        
+        twitter_image = soup.find('meta', property='twitter:image')
+        if twitter_image and twitter_image.get('content'):
+            return twitter_image['content']
+
+        # If meta tags not found, look for prominent <img> tags
+        # Prioritize images within common article content containers
+        article_content_divs = soup.find_all(['article', 'div'], class_=['article-body', 'content-body', 'story-content', 'main-content'])
+        for div in article_content_divs:
+            img = div.find('img')
+            if img and img.get('src'):
+                return img['src']
+        
+        # Fallback: get the first large-looking image from the page
+        img = soup.find('img', {'src': True}) # Find any img tag with a src
+        if img and img.get('src'):
+            return img['src']
+
+    except requests.exceptions.RequestException:
+        pass # Suppress connection errors
+    except Exception:
+        pass # Suppress parsing errors
+
+    return None # No image found
+
+
+# Global variable to store all loaded media names
+ALL_MEDIA_NAMES = []
+
+@st.cache_data(ttl=3600)  # Cache the data for 1 hour to avoid re-loading file unnecessarily
+def load_initial_data_for_media_names():
+    """
+    Loads data once to extract all unique media names for the filter.
+    This prevents re-loading the full data frame just to get filter options.
+    """
+    if not LOCAL_DATA_FILE.exists():
+        return []
+
+    try:
+        df_temp = pd.read_csv(LOCAL_DATA_FILE)
+        df_temp.rename(columns={'media_name': 'source_name'}, inplace=True)
+        # Drop rows where source_name is NaN before getting unique values
+        unique_media_names = sorted(df_temp['source_name'].dropna().unique().tolist())
+        return unique_media_names
+    except Exception as e:
+        st.error(f"Error loading data for media names: {e}")
+        return []
+
+def get_media_names_for_filter():
+    """Returns a list of all unique media names from the loaded data."""
+    global ALL_MEDIA_NAMES
+    if not ALL_MEDIA_NAMES: # Load only if empty
+        ALL_MEDIA_NAMES = load_initial_data_for_media_names()
+    return ALL_MEDIA_NAMES
+
+@st.cache_data(ttl=3600)  # Cache the data for 1 hour to avoid re-loading file unnecessarily
+def load_and_transform_data():
+    """
+    Loads data from a local CSV file, fetches article snippets and images,
+    assigns labels and scores, and transforms it into a pandas DataFrame.
+    """
+    # Check if the data file exists
+    if not LOCAL_DATA_FILE.exists():
+        st.error(f"Local data file not found at {LOCAL_DATA_FILE}. Please ensure your CSV is in the 'data/' folder.")
         return pd.DataFrame()
 
-    labeled_articles = assign_fake_labels(raw_articles)
-    df_articles = pd.DataFrame(labeled_articles)
+    try:
+        # Load the CSV file
+        df_articles = pd.read_csv(LOCAL_DATA_FILE)
 
-    # Clean the DataFrame and format it to match your original structure
-    if not df_articles.empty:
-        df_articles['publishedAt'] = pd.to_datetime(df_articles['publishedAt'])
-        df_articles['date_published'] = df_articles['publishedAt'].dt.date
-        df_articles.rename(columns={'title': 'headline', 'image': 'urlToImage'}, inplace=True)
+        # Rename columns to match the dashboard's expectations
+        df_articles.rename(columns={
+            'title': 'headline',
+            'publish_date': 'date_published',
+            'media_name': 'source_name' 
+        }, inplace=True)
+
+        # Ensure 'date_published' is datetime type and then convert to date object
+        df_articles['date_published'] = pd.to_datetime(df_articles['date_published']).dt.date
         
-        # Select and reorder the final columns
-        final_cols = ['headline', 'content', 'url', 'urlToImage', 'date_published', 'label']
+        # --- Fetch article snippets and images from URLs ---
+        st.info("Fetching article snippets and images from URLs. This may take a moment...")
+        progress_bar = st.progress(0)
+        total_articles = len(df_articles)
+        
+        snippets = []
+        image_urls = []
+        for i, row in df_articles.iterrows():
+            # Fetch snippet
+            snippet = fetch_first_paragraph(row['url'])
+            if snippet:
+                snippets.append(snippet[:500] + "..." if len(snippet) > 500 else snippet) # Truncate snippet
+            else:
+                snippets.append(row['headline'][:250] + "..." if pd.notna(row['headline']) else "") # Fallback to headline
+            
+            # Fetch image
+            image = fetch_article_image(row['url'])
+            image_urls.append(image)
+
+            progress_bar.progress((i + 1) / total_articles)
+            time.sleep(0.02) # Be kind to websites, add a small delay
+        
+        df_articles['text'] = snippets
+        df_articles['urlToImage'] = image_urls
+        st.success("Finished fetching snippets and images.")
+
+        # Assign content-driven labels and scores
+        df_articles = assign_labels_and_scores(df_articles)
+        
+        # Select and reorder the final columns to match main.py's expectations
+        all_labels = ["Factual", "Neutral", "Pro-Russia", "Anti-West", "Anti-France", "Sensationalist", "Anti-US", "Opinion"]
+        final_cols = ['headline', 'text', 'url', 'urlToImage', 'date_published', 'source_name'] + all_labels
+        
+        # Ensure all final_cols exist before selection
         for col in final_cols:
             if col not in df_articles.columns:
                 df_articles[col] = None
         
         df_articles = df_articles[final_cols]
-        # Rename the content column to text to be consistent with the app's display
-        df_articles.rename(columns={'content': 'text'}, inplace=True)
     
-    return df_articles
+        return df_articles
+
+    except Exception as e:
+        st.error(f"Error loading or processing local data: {e}")
+        return pd.DataFrame()
