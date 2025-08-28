@@ -9,9 +9,9 @@ import requests
 from bs4 import BeautifulSoup
 import time # For adding a delay between requests
 
-# Define the path to your data directory
-DATA_DIR = Path("data/")
-LOCAL_DATA_FILE = DATA_DIR / "benin-or-benin-or-be-all-story-urls-20250808061215.csv"
+# Define the path to your data directory (now a URL)
+# IMPORTANT: Replace with your actual GitHub raw CSV URL
+LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250828120904.csv"
 
 # --- Keyword definitions for content-driven label assignment ---
 KEYWORD_LABELS = {
@@ -23,7 +23,6 @@ KEYWORD_LABELS = {
     "Opinion": ["opinion", "analysis", "commentary", "viewpoint", "perspective", "column", "editorial", "blog", "critique"],
     "Business": ["economy", "business", "market", "finance", "investment", "trade", "growth", "industry", "currency", "revenue", "jobs", "commerce", "development"],
     "Politics": ["government", "election", "parliament", "president", "policy", "diplomacy", "governance", "democracy", "coup", "protest", "legislation", "political party", "reforms"]
-    # Factual and Neutral will often be default or assigned if other strong labels aren't found
 }
 
 # Combine all entities to monitor for potential country-based filtering in articles (not used as direct filter now)
@@ -40,7 +39,6 @@ def get_news_categories():
     Returns a list of supported news categories.
     These are for filtering purposes in the dashboard.
     """
-    # Categories are focused as per previous request
     return ["business", "politics", "general"] 
 
 def assign_labels_and_scores(df_articles):
@@ -115,13 +113,11 @@ def fetch_first_paragraph(url):
             return first_p.get_text(strip=True)
 
     except requests.exceptions.RequestException as e:
-        # st.warning(f"Could not fetch content from {url}: {e}") # Suppress this warning for cleaner output
         pass
     except Exception as e:
-        # st.warning(f"Error parsing content from {url}: {e}") # Suppress this warning for cleaner output
         pass
     
-    return None # Return None if parsing fails
+    return None
 
 def fetch_article_image(url):
     """
@@ -153,16 +149,16 @@ def fetch_article_image(url):
                 return img['src']
         
         # Fallback: get the first large-looking image from the page
-        img = soup.find('img', {'src': True}) # Find any img tag with a src
+        img = soup.find('img', {'src': True})
         if img and img.get('src'):
             return img['src']
 
     except requests.exceptions.RequestException:
-        pass # Suppress connection errors
+        pass
     except Exception:
-        pass # Suppress parsing errors
+        pass
 
-    return None # No image found
+    return None
 
 
 # Global variable to store all loaded media names
@@ -174,39 +170,30 @@ def load_initial_data_for_media_names():
     Loads data once to extract all unique media names for the filter.
     This prevents re-loading the full data frame just to get filter options.
     """
-    if not LOCAL_DATA_FILE.exists():
-        return []
-
     try:
         df_temp = pd.read_csv(LOCAL_DATA_FILE)
         df_temp.rename(columns={'media_name': 'source_name'}, inplace=True)
-        # Drop rows where source_name is NaN before getting unique values
         unique_media_names = sorted(df_temp['source_name'].dropna().unique().tolist())
         return unique_media_names
     except Exception as e:
-        st.error(f"Error loading data for media names: {e}")
+        st.error(f"Error loading data for media names from URL: {e}")
         return []
 
 def get_media_names_for_filter():
     """Returns a list of all unique media names from the loaded data."""
     global ALL_MEDIA_NAMES
-    if not ALL_MEDIA_NAMES: # Load only if empty
+    if not ALL_MEDIA_NAMES:
         ALL_MEDIA_NAMES = load_initial_data_for_media_names()
     return ALL_MEDIA_NAMES
 
 @st.cache_data(ttl=3600)  # Cache the data for 1 hour to avoid re-loading file unnecessarily
 def load_and_transform_data():
     """
-    Loads data from a local CSV file, fetches article snippets and images,
+    Loads data from the GitHub raw CSV URL, fetches article snippets and images,
     assigns labels and scores, and transforms it into a pandas DataFrame.
     """
-    # Check if the data file exists
-    if not LOCAL_DATA_FILE.exists():
-        st.error(f"Local data file not found at {LOCAL_DATA_FILE}. Please ensure your CSV is in the 'data/' folder.")
-        return pd.DataFrame()
-
     try:
-        # Load the CSV file
+        # Load the CSV file directly from the URL
         df_articles = pd.read_csv(LOCAL_DATA_FILE)
 
         # Rename columns to match the dashboard's expectations
@@ -220,30 +207,38 @@ def load_and_transform_data():
         df_articles['date_published'] = pd.to_datetime(df_articles['date_published']).dt.date
         
         # --- Fetch article snippets and images from URLs ---
-        st.info("Fetching article snippets and images from URLs. This may take a moment...")
-        progress_bar = st.progress(0)
-        total_articles = len(df_articles)
-        
-        snippets = []
-        image_urls = []
-        for i, row in df_articles.iterrows():
-            # Fetch snippet
-            snippet = fetch_first_paragraph(row['url'])
-            if snippet:
-                snippets.append(snippet[:500] + "..." if len(snippet) > 500 else snippet) # Truncate snippet
-            else:
-                snippets.append(row['headline'][:250] + "..." if pd.notna(row['headline']) else "") # Fallback to headline
+        # Only fetch if 'text' column is empty or doesn't exist AND 'urlToImage' is empty or doesn't exist
+        if ('text' not in df_articles.columns or df_articles['text'].isnull().all()) or \
+           ('urlToImage' not in df_articles.columns or df_articles['urlToImage'].isnull().all()):
             
-            # Fetch image
-            image = fetch_article_image(row['url'])
-            image_urls.append(image)
+            st.info("Fetching article snippets and images from URLs. This may take a moment...")
+            progress_bar = st.progress(0)
+            total_articles = len(df_articles)
+            
+            snippets = []
+            image_urls = []
+            for i, row in df_articles.iterrows():
+                # Fetch snippet
+                snippet = fetch_first_paragraph(row['url'])
+                if snippet:
+                    snippets.append(snippet[:500] + "..." if len(snippet) > 500 else snippet)
+                else:
+                    snippets.append(row['headline'][:250] + "..." if pd.notna(row['headline']) else "")
+                
+                # Fetch image
+                image = fetch_article_image(row['url'])
+                image_urls.append(image)
 
-            progress_bar.progress((i + 1) / total_articles)
-            time.sleep(0.02) # Be kind to websites, add a small delay
-        
-        df_articles['text'] = snippets
-        df_articles['urlToImage'] = image_urls
-        st.success("Finished fetching snippets and images.")
+                progress_bar.progress((i + 1) / total_articles)
+                time.sleep(0.02)
+            
+            df_articles['text'] = snippets
+            df_articles['urlToImage'] = image_urls
+            st.success("Finished fetching snippets and images.")
+        else:
+            # If text and image columns are already populated, just truncate text
+            df_articles['text'] = df_articles['text'].apply(lambda x: str(x)[:500] + "..." if pd.notna(x) and len(str(x)) > 500 else x)
+
 
         # Assign content-driven labels and scores
         df_articles = assign_labels_and_scores(df_articles)
@@ -262,5 +257,5 @@ def load_and_transform_data():
         return df_articles
 
     except Exception as e:
-        st.error(f"Error loading or processing local data: {e}")
+        st.error(f"Error loading or processing data from URL: {e}")
         return pd.DataFrame()
