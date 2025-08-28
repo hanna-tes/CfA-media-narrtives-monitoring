@@ -7,13 +7,17 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import requests
 from bs4 import BeautifulSoup
-import time # For adding a delay between requests
+import time
+import os
+from urllib.parse import urlparse
 
-# Define the path to your data directory (now a URL)
-# IMPORTANT: Replace with your actual GitHub raw CSV URL
-LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250828120904.csv" # Example: "https://raw.githubusercontent.com/your_username/your_repo/main/data/benin-or-benin-or-be-all-story-urls-20250808061215.csv"
+# --- Configuration ---
+LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250828120904.csv"
 
-# --- Keyword definitions for content-driven label assignment ---
+# Toggle: Set to True to skip web scraping (useful during development)
+SKIP_WEB_SCRAPING = False  # Change to True for faster testing
+
+# --- Keyword definitions ---
 KEYWORD_LABELS = {
     "Pro-Russia": ["russia", "kremlin", "putin", "russian forces", "moscow", "russian influence", "russia partnership"],
     "Anti-West": ["western sanctions", "western interference", "nato", "eu policy", "western powers", "western interests", "western hypocrisy"],
@@ -25,7 +29,6 @@ KEYWORD_LABELS = {
     "Politics": ["government", "election", "parliament", "president", "policy", "diplomacy", "governance", "democracy", "coup", "protest", "legislation", "political party", "reforms"]
 }
 
-# Combine all entities to monitor for potential country-based filtering in articles (not used as direct filter now)
 ALL_ENTITIES_TO_MONITOR = [
     'South Africa', 'Nigeria', 'Kenya', 'Ghana', 'Ivory Coast', 'Ethiopia', 
     'Sudan', 'Burkina Faso', 'Mali', 'Togo', 'Benin',
@@ -33,237 +36,225 @@ ALL_ENTITIES_TO_MONITOR = [
     'militant groups', 'insurgents', 'terrorists', 'extremists'
 ]
 
+# Global list of media names
+ALL_MEDIA_NAMES = []
+
 
 def get_news_categories():
-    """
-    Returns a list of supported news categories.
-    These are for filtering purposes in the dashboard.
-    """
-    return ["business", "politics", "general"] 
+    return ["business", "politics", "general"]
+
 
 def assign_labels_and_scores(df_articles):
-    """
-    Assigns political leanings and scores to each article based on keyword presence in content.
-
-    Args:
-        df_articles (pd.DataFrame): DataFrame of articles.
-
-    Returns:
-        pd.DataFrame: The DataFrame with new 'label' and score columns for each defined label.
-    """
-    labels = ["Factual", "Neutral", "Pro-Russia", "Anti-West", "Anti-France", "Sensationalist", "Anti-US", "Opinion"]
-    
-    # Initialize all label columns to 0.0
+    """Assign labels and scores based on keyword matching."""
+    labels = list(KEYWORD_LABELS.keys()) + ["Factual", "Neutral"]
     for label in labels:
         df_articles[label] = 0.0
 
     for index, row in df_articles.iterrows():
-        # Ensure 'text' and 'headline' are strings before lowercasing
         combined_text = f"{str(row['headline'] or '').lower()} {str(row['text'] or '').lower()}"
-        
+
         found_strong_labels = False
         for label, keywords in KEYWORD_LABELS.items():
-            score = 0.0
-            for keyword in keywords:
-                # Use word boundaries for more precise matching (e.g., "us " not "business")
-                # Also handle cases where keyword is at the very beginning or end of the text
-                if f" {keyword} " in combined_text or combined_text.startswith(f"{keyword} ") or combined_text.endswith(f" {keyword}"):
-                    score += 0.2 
-            
+            score = sum(0.2 for keyword in keywords
+                        if (f" {keyword} " in combined_text or
+                            combined_text.startswith(f"{keyword} ") or
+                            combined_text.endswith(f" {keyword}")))
             if score > 0:
                 df_articles.at[index, label] = min(score, 1.0)
-                if score >= 0.3: # Consider a label "found" if score is reasonable
+                if score >= 0.3:
                     found_strong_labels = True
-        
-        # If no specific labels were strongly matched, assign a higher Factual/Neutral score
-        if not found_strong_labels:
-            df_articles.at[index, "Factual"] = 0.7 + random.uniform(-0.1, 0.1) # Default to factual
-            df_articles.at[index, "Neutral"] = 0.6 + random.uniform(-0.1, 0.1) # Default to neutral
 
-    # Ensure scores don't exceed 1.0 (clipping again just in case)
+        if not found_strong_labels:
+            df_articles.at[index, "Factual"] = 0.7 + random.uniform(-0.1, 0.1)
+            df_articles.at[index, "Neutral"] = 0.6 + random.uniform(-0.1, 0.1)
+
     for label in labels:
         df_articles[label] = df_articles[label].clip(upper=1.0)
-            
     return df_articles
 
+
 def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
-    """
-    Fetches content (snippet or image) from a URL with retry mechanism.
-    """
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36' # More modern UA
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
     }
-    
     for i in range(retries):
         try:
-            response = requests.get(url, headers=headers, timeout=15) # Increased timeout
-            response.raise_for_status() # Raise HTTPError for bad responses
+            response = requests.get(url, headers=headers, timeout=15)
+            response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
 
             if fetch_type == "snippet":
-                article_content_divs = soup.find_all(['article', 'div'], class_=['article-body', 'content-body', 'story-content', 'main-content'])
-                if article_content_divs:
-                    for div in article_content_divs:
-                        first_p = div.find('p')
-                        if first_p and first_p.get_text(strip=True):
-                            return first_p.get_text(strip=True)
-                first_p = soup.find('p')
-                if first_p and first_p.get_text(strip=True):
-                    return first_p.get_text(strip=True)
+                selectors = soup.find_all(['article', 'div'], class_=['article-body', 'content-body', 'story-content', 'main-content'])
+                for sel in selectors:
+                    p = sel.find('p')
+                    if p and p.get_text(strip=True):
+                        return p.get_text(strip=True)[:500] + "..."
+                p = soup.find('p')
+                if p and p.get_text(strip=True):
+                    return p.get_text(strip=True)[:500] + "..."
+
             elif fetch_type == "image":
-                og_image = soup.find('meta', property='og:image')
-                if og_image and og_image.get('content'):
-                    return og_image['content']
-                twitter_image = soup.find('meta', property='twitter:image')
-                if twitter_image and twitter_image.get('content'):
-                    return twitter_image['content']
-                article_content_divs = soup.find_all(['article', 'div'], class_=['article-body', 'content-body', 'story-content', 'main-content'])
-                for div in article_content_divs:
-                    img = div.find('img')
-                    if img and img.get('src'):
-                        return img['src']
-                img = soup.find('img', {'src': True})
-                if img and img.get('src'):
+                og = soup.find('meta', property='og:image')
+                if og and og.get('content'):
+                    return og['content']
+                tw = soup.find('meta', property='twitter:image')
+                if tw and tw.get('content'):
+                    return tw['content']
+                img = soup.find('img', src=True)
+                if img:
                     return img['src']
-            return None # If content not found in this retry
+
+            return None
 
         except requests.exceptions.Timeout:
-            # st.warning(f"Timeout fetching {fetch_type} from {url} (attempt {i+1}/{retries}). Retrying...")
-            time.sleep(delay * (i + 1)) # Exponential backoff
+            time.sleep(delay * (i + 1))
         except requests.exceptions.RequestException as e:
-            if e.response is not None and e.response.status_code == 404:
-                # st.warning(f"404 Not Found for {fetch_type} from {url}. Skipping.")
-                return None # No need to retry 404
-            elif e.response is not None and e.response.status_code == 403:
-                # st.warning(f"403 Forbidden for {fetch_type} from {url}. Skipping.")
-                return None # No need to retry 403
-            # st.warning(f"Network error fetching {fetch_type} from {url} (attempt {i+1}/{retries}). Retrying...")
+            if e.response and e.response.status_code in (403, 404):
+                return None
             time.sleep(delay * (i + 1))
-        except Exception as e:
-            # st.warning(f"Error parsing {fetch_type} from {url} (attempt {i+1}/{retries}). Retrying...")
+        except Exception:
             time.sleep(delay * (i + 1))
-            
-    # st.warning(f"Failed to fetch {fetch_type} from {url} after {retries} attempts.") # Final warning if all retries fail
     return None
 
 
-# Global variable to store all loaded media names
-ALL_MEDIA_NAMES = []
-
-@st.cache_data(ttl=3600)  # Cache the data for 1 hour to avoid re-loading file unnecessarily
-def load_initial_data_for_media_names():
-    """
-    Loads data once to extract all unique media names for the filter.
-    This prevents re-loading the full data frame just to get filter options.
-    """
+@st.cache_data(ttl=3600)  # Cache for 1 hour
+def load_raw_data():
+    """Load and preprocess raw data without any web scraping."""
     try:
-        df_temp = pd.read_csv(LOCAL_DATA_FILE)
-        df_temp.rename(columns={'media_name': 'source_name'}, inplace=True)
-        unique_media_names = sorted(df_temp['source_name'].dropna().unique().tolist())
-        return unique_media_names
-    except Exception as e:
-        st.error(f"Error loading data for media names from URL: {e}")
-        return []
-
-def get_media_names_for_filter():
-    """Returns a list of all unique media names from the loaded data."""
-    global ALL_MEDIA_NAMES
-    if not ALL_MEDIA_NAMES:
-        ALL_MEDIA_NAMES = load_initial_data_for_media_names()
-    return ALL_MEDIA_NAMES
-
-@st.cache_data(ttl=3600)  # Cache the data for 1 hour to avoid re-loading file unnecessarily
-def load_and_transform_data(skip_web_scraping=False): # Added skip_web_scraping parameter
-    """
-    Loads data from the GitHub raw CSV URL, optionally fetches article snippets and images,
-    assigns labels and scores, and transforms it into a pandas DataFrame.
-    """
-    try:
-        # Load the CSV file directly from the URL
-        df_articles = pd.read_csv(LOCAL_DATA_FILE)
-
-        # Rename columns to match the dashboard's expectations
-        df_articles.rename(columns={
+        df = pd.read_csv(LOCAL_DATA_FILE)
+        df.rename(columns={
             'title': 'headline',
             'publish_date': 'date_published',
-            'media_name': 'source_name' 
+            'media_name': 'source_name'
         }, inplace=True)
 
-        # Ensure 'date_published' is datetime type and then convert to date object
-        df_articles['date_published'] = pd.to_datetime(
-            df_articles['date_published'], 
-            format="%Y-%m-%d %H:%M:%S.%f", # Specify format including fractional seconds
-            errors='coerce'               # Convert unparseable dates to NaT instead of erroring
+        df['date_published'] = pd.to_datetime(
+            df['date_published'], format="%Y-%m-%d %H:%M:%S.%f", errors='coerce'
         ).dt.date
-        
-        # --- Handle Fetching article snippets and images from URLs ---
-        failed_snippets_count = 0
-        failed_images_count = 0
 
-        if not skip_web_scraping:
-            # Only fetch if 'text' column is empty or doesn't exist AND 'urlToImage' is empty or doesn't exist
-            if ('text' not in df_articles.columns or df_articles['text'].isnull().all()) or \
-               ('urlToImage' not in df_articles.columns or df_articles['urlToImage'].isnull().all()):
-                
-                st.info("Fetching article snippets and images from URLs. This may take a moment...")
-                progress_bar = st.progress(0)
-                total_articles = len(df_articles)
-                
-                snippets = []
-                image_urls = []
-                for i, row in df_articles.iterrows():
-                    # Fetch snippet
-                    snippet = fetch_content_with_retry(row['url'], fetch_type="snippet")
-                    if snippet:
-                        snippets.append(snippet[:500] + "..." if len(snippet) > 500 else snippet)
-                    else:
-                        snippets.append(row['headline'][:250] + "..." if pd.notna(row['headline']) else "No snippet available.")
-                        failed_snippets_count += 1
-                    
-                    # Fetch image
-                    image = fetch_content_with_retry(row['url'], fetch_type="image")
-                    if not image:
-                        failed_images_count += 1
-                    image_urls.append(image)
+        # Ensure required columns exist
+        for col in ['headline', 'url', 'source_name']:
+            if col not in df.columns:
+                df[col] = None
 
-                    progress_bar.progress((i + 1) / total_articles)
-                    # No time.sleep here because it's handled by fetch_content_with_retry
-                
-                df_articles['text'] = snippets
-                df_articles['urlToImage'] = image_urls
-                st.success("Finished fetching snippets and images.")
-                if failed_snippets_count > 0:
-                    st.warning(f"Failed to fetch {failed_snippets_count} article snippets due to network errors or website restrictions.")
-                if failed_images_count > 0:
-                    st.warning(f"Failed to fetch {failed_images_count} article images due to network errors or website restrictions.")
-            else:
-                # If text and image columns are already populated, just truncate text
-                df_articles['text'] = df_articles['text'].apply(lambda x: str(x)[:500] + "..." if pd.notna(x) and len(str(x)) > 500 else x)
-        else:
-            # If skipping web scraping, ensure 'text' and 'urlToImage' are set to a fallback
-            df_articles['text'] = df_articles['headline'].apply(lambda x: str(x)[:250] + "..." if pd.notna(x) else "No snippet (web scraping skipped).")
-            df_articles['urlToImage'] = None # Placeholder will be used by main.py
+        # Initialize text and image columns if missing
+        if 'text' not in df.columns:
+            df['text'] = None
+        if 'urlToImage' not in df.columns:
+            df['urlToImage'] = None
 
-
-        # Assign content-driven labels and scores
-        df_articles = assign_labels_and_scores(df_articles)
-        
-        # Select and reorder the final columns to match main.py's expectations
-        all_labels = ["Factual", "Neutral", "Pro-Russia", "Anti-West", "Anti-France", "Sensationalist", "Anti-US", "Opinion"]
-        final_cols = ['headline', 'text', 'url', 'urlToImage', 'date_published', 'source_name'] + all_labels
-        
-        # Ensure all final_cols exist before selection
-        for col in final_cols:
-            if col not in df_articles.columns:
-                df_articles[col] = None
-        
-        df_articles = df_articles[final_cols]
-    
-        return df_articles
-
-    except requests.exceptions.RequestException as e:
-        st.error(f"Network error loading data from URL: {LOCAL_DATA_FILE}. Please check your internet connection and the URL. Error: {e}")
-        return pd.DataFrame()
+        return df.reset_index(drop=True)
     except Exception as e:
-        st.error(f"Error loading or processing data from URL: {LOCAL_DATA_FILE}. Please check your CSV format and the URL. Error: {e}")
+        st.error(f"Error loading data: {e}")
         return pd.DataFrame()
+
+
+def enrich_articles_with_scraping(df):
+    """Fetch missing snippets and images. Does NOT use @st.cache."""
+    if SKIP_WEB_SCRAPING:
+        st.info("Web scraping skipped (SKIP_WEB_SCRAPING=True). Using headlines as fallback.")
+        df['text'] = df['headline'].apply(lambda x: f"{str(x)[:250]}..." if pd.notna(x) else "No snippet available.")
+        df['urlToImage'] = None
+        return df
+
+    # Only scrape where needed
+    needs_snippet = df['text'].isna() | (df['text'].eq("")) | (df['text'].eq("None"))
+    needs_image = df['urlToImage'].isna() | (df['urlToImage'].eq("")) | (df['urlToImage'].eq("None"))
+
+    if not (needs_snippet.any() or needs_image.any()):
+        st.info("All articles already have text and images. Skipping scraping.")
+        return df
+
+    st.info("Starting to fetch article content and images. This may take a few minutes...")
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    total = len(df)
+    snippets = df['text'].tolist()
+    images = df['urlToImage'].tolist()
+    failed_snippets = 0
+    failed_images = 0
+
+    for i, row in df.iterrows():
+        url = row['url']
+        status_text.text(f"Processing ({i+1}/{total}): {url[:50]}...")
+
+        if needs_snippet.iloc[i]:
+            snippet = fetch_content_with_retry(url, "snippet")
+            snippets[i] = snippet or (str(row['headline'])[:250] + "..." if pd.notna(row['headline']) else "No snippet.")
+            if not snippet:
+                failed_snippets += 1
+
+        if needs_image.iloc[i]:
+            image = fetch_content_with_retry(url, "image")
+            images[i] = image
+            if not image:
+                failed_images += 1
+
+        progress_bar.progress((i + 1) / total)
+
+    df['text'] = snippets
+    df['urlToImage'] = images
+
+    progress_bar.empty()
+    status_text.empty()
+
+    st.success("Content enrichment complete!")
+    if failed_snippets:
+        st.warning(f"Failed to fetch snippets for {failed_snippets} articles.")
+    if failed_images:
+        st.warning(f"Failed to fetch images for {failed_images} articles.")
+
+    return df
+
+
+@st.cache_data(ttl=3600)
+def get_media_names_cached():
+    """Cached list of media names."""
+    df = load_raw_data()
+    if 'source_name' in df.columns:
+        return sorted(df['source_name'].dropna().unique().tolist())
+    return []
+
+
+def get_media_names_for_filter():
+    global ALL_MEDIA_NAMES
+    if not ALL_MEDIA_NAMES:
+        ALL_MEDIA_NAMES = get_media_names_cached()
+    return ALL_MEDIA_NAMES
+
+
+def load_and_transform_data():
+    """
+    Main entry point. Loads, enriches, labels data.
+    Uses session_state to avoid re-scraping on every rerun.
+    """
+
+    # Use session state to persist enriched data across reruns
+    if 'enriched_df' not in st.session_state:
+        st.session_state.enriched_df = None
+
+    # Step 1: Load raw data
+    df = load_raw_data()
+    if df.empty:
+        return pd.DataFrame()
+
+    # Step 2: Enrich only if not already done
+    if st.session_state.enriched_df is None:
+        df = enrich_articles_with_scraping(df)
+        st.session_state.enriched_df = df  # Save to session state
+    else:
+        df = st.session_state.enriched_df
+
+    # Step 3: Assign labels (fast operation)
+    df = assign_labels_and_scores(df.copy())
+
+    # Final column selection
+    all_labels = ["Factual", "Neutral", "Pro-Russia", "Anti-West", "Anti-France", "Sensationalist", "Anti-US", "Opinion"]
+    final_cols = ['headline', 'text', 'url', 'urlToImage', 'date_published', 'source_name'] + all_labels
+    for col in final_cols:
+        if col not in df.columns:
+            df[col] = None
+    df = df[final_cols]
+
+    return df
