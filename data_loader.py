@@ -11,7 +11,7 @@ import time # For adding a delay between requests
 
 # Define the path to your data directory (now a URL)
 # IMPORTANT: Replace with your actual GitHub raw CSV URL
-LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250828134636.csv" 
+LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250828145206.csv" 
 
 # --- Keyword definitions for content-driven label assignment ---
 KEYWORD_LABELS = {
