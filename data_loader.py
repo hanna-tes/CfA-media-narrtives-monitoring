@@ -11,7 +11,7 @@ import time # For adding a delay between requests
 
 # Define the path to your data directory (now a URL)
 # IMPORTANT: Replace with your actual GitHub raw CSV URL
-LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250828120904.csv"
+LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250828120904.csv" 
 
 # --- Keyword definitions for content-driven label assignment ---
 KEYWORD_LABELS = {
@@ -204,7 +204,11 @@ def load_and_transform_data():
         }, inplace=True)
 
         # Ensure 'date_published' is datetime type and then convert to date object
-        df_articles['date_published'] = pd.to_datetime(df_articles['date_published']).dt.date
+        df_articles['date_published'] = pd.to_datetime(
+            df_articles['date_published'], 
+            format="%Y-%m-%d %H:%M:%S.%f", # Specify format including fractional seconds
+            errors='coerce'               # Convert unparseable dates to NaT instead of erroring
+        ).dt.date
         
         # --- Fetch article snippets and images from URLs ---
         # Only fetch if 'text' column is empty or doesn't exist AND 'urlToImage' is empty or doesn't exist
