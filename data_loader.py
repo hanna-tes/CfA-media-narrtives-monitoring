@@ -1,4 +1,4 @@
-# data_loader.py
+# data_loader.py (same as before)
 
 import streamlit as st
 import pandas as pd
@@ -7,11 +7,9 @@ import time
 import requests
 from bs4 import BeautifulSoup
 
-# --- Configuration ---
 LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250829083045.csv"
-SKIP_WEB_SCRAPING = False  # Set to True during development
+SKIP_WEB_SCRAPING = False
 
-# --- Keyword Labels ---
 KEYWORD_LABELS = {
     "Pro-Russia": ["russia", "kremlin", "putin", "russian forces", "moscow", "russian influence", "russia partnership"],
     "Anti-West": ["western sanctions", "western interference", "nato", "eu policy", "western powers", "western interests", "western hypocrisy"],
@@ -62,9 +60,7 @@ def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
             soup = BeautifulSoup(response.text, 'html.parser')
 
             if fetch_type == "snippet":
-                containers = soup.find_all(['article', 'div'], class_=[
-                    'article-body', 'content-body', 'story-content', 'main-content'
-                ])
+                containers = soup.find_all(['article', 'div'], class_=['article-body', 'content-body', 'story-content', 'main-content'])
                 for container in containers:
                     p = container.find('p')
                     if p and p.get_text(strip=True):
@@ -107,7 +103,7 @@ def load_raw_data():
             if col not in df.columns:
                 df[col] = None
         return df.reset_index(drop=True)
-    except Exception as e:
+    except Exception:
         return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
@@ -152,7 +148,7 @@ def enrich_articles_with_scraping(df):
     for url in urls_to_fetch:
         if url not in scraped_text:
             snippet = fetch_content_with_retry(url, "snippet")
-            scraped_text[url] = snippet
+            scraped_text[url] = snippet or f"{row['headline'][:200]}..." if pd.notna(row['headline']) else "No summary available."
 
         if url not in scraped_image:
             image = fetch_content_with_retry(url, "image")
