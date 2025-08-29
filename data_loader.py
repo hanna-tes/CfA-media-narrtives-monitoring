@@ -72,6 +72,7 @@ def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
                 p = soup.find('p')
                 if p and p.get_text(strip=True):
                     return p.get_text(strip=True)[:500] + "..."
+                return "No summary available."
 
             elif fetch_type == "image":
                 og = soup.find('meta', property='og:image')
@@ -83,10 +84,11 @@ def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
                 img = soup.find('img', src=True)
                 if img:
                     return img['src'] or img.get('data-src')
-            return None
+                return None
+
         except Exception:
             time.sleep(delay * (i + 1))
-    return None
+    return "No summary available."
 
 @st.cache_data(ttl=3600)
 def load_raw_data():
@@ -98,16 +100,14 @@ def load_raw_data():
             'media_name': 'source_name'
         }, inplace=True)
 
-        # ✅ Fix: Parse '2025-08-27 00:04:51' correctly
         df['date_published'] = pd.to_datetime(df['date_published'], format="%Y-%m-%d %H:%M:%S", errors='coerce')
-        df['date_published'] = df['date_published'].dt.date  # Keep only date
+        df['date_published'] = df['date_published'].dt.date
 
         for col in ['headline', 'url', 'source_name', 'text', 'urlToImage']:
             if col not in df.columns:
                 df[col] = None
         return df.reset_index(drop=True)
     except Exception as e:
-        st.error(f"Error loading data: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
@@ -121,14 +121,11 @@ def get_media_names_for_filter():
     return get_media_names_cached()
 
 def enrich_articles_with_scraping(df):
-    """Enrich articles with snippets and images — silently skip failures."""
     if SKIP_WEB_SCRAPING:
-        st.info("⏭️ Web scraping skipped. Using fallbacks.")
-        df['text'] = df['headline'].apply(lambda x: f"{str(x)[:250]}..." if pd.notna(x) else "No snippet available.")
+        df['text'] = df['headline'].apply(lambda x: f"{str(x)[:250]}..." if pd.notna(x) else "No summary available.")
         df['urlToImage'] = None
         return df
 
-    # Initialize session state
     if 'scraped_data' not in st.session_state:
         st.session_state.scraped_data = {
             'url_to_text': {},
@@ -138,7 +135,6 @@ def enrich_articles_with_scraping(df):
     scraped_text = st.session_state.scraped_data['url_to_text']
     scraped_image = st.session_state.scraped_data['url_to_image']
 
-    # Identify URLs that still need processing
     urls_to_fetch = []
     for _, row in df.iterrows():
         url = row['url']
@@ -153,42 +149,20 @@ def enrich_articles_with_scraping(df):
         df['urlToImage'] = df['url'].map(scraped_image).fillna(df['urlToImage'])
         return df
 
-    # Show progress
-    st.info("Fetching content for articles. This may take a while...")
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-
-    total = len(urls_to_fetch)
-    for i, url in enumerate(urls_to_fetch):
-        status_text.text(f"Processing: {url[:60]}...")
-
-        # Fetch snippet
+    for url in urls_to_fetch:
         if url not in scraped_text:
             snippet = fetch_content_with_retry(url, "snippet")
-            scraped_text[url] = snippet or f"{df[df['url']==url]['headline'].iloc[0][:250]}..." \
-                                 if not df[df['url']==url].empty else "No snippet available."
+            scraped_text[url] = snippet
 
-        # Fetch image
         if url not in scraped_image:
             image = fetch_content_with_retry(url, "image")
-            scraped_image[url] = image  # Can be None
+            scraped_image[url] = image
 
-        progress_bar.progress((i + 1) / total)
-
-    # Save back to session state
     st.session_state.scraped_data['url_to_text'] = scraped_text
     st.session_state.scraped_data['url_to_image'] = scraped_image
 
-    # Apply to DataFrame
     df['text'] = df['url'].map(scraped_text).fillna(df['text'])
     df['urlToImage'] = df['url'].map(scraped_image).fillna(df['urlToImage'])
-
-    # Hide UI elements
-    progress_bar.empty()
-    status_text.empty()
-
-    # ✅ Success message only
-    st.success(f"✅ Successfully processed {len(urls_to_fetch)} articles.")
 
     return df
 
