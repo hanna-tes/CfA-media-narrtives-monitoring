@@ -66,12 +66,26 @@ def main():
     if 'current_page' not in st.session_state:
         st.session_state.current_page = 1
 
-    # --- Load Data ---
-    all_articles_df = load_and_transform_data()
+    # --- Show Progress Bar During Load ---
+    with st.spinner("Loading articles..."):
+        progress_bar = st.progress(0)
+        status_text = st.empty()
 
-    if all_articles_df.empty:
-        st.warning("⚠️ No articles loaded.")
-        st.stop()
+        # Load data
+        all_articles_df = load_and_transform_data()
+
+        if all_articles_df.empty:
+            st.warning("⚠️ No articles loaded.")
+            st.stop()
+
+        # Simulate progress feedback (actual work is in data_loader)
+        for i in range(100):
+            time.sleep(0.01)  # Adjust based on real load time
+            progress_bar.progress((i + 1) / 100)
+
+        # ✅ Clear progress bar and status text — no success message
+        progress_bar.empty()
+        status_text.empty()  # This removes the message
 
     # --- Sidebar ---
     with st.sidebar:
@@ -189,4 +203,5 @@ def main():
 
 
 if __name__ == "__main__":
+    import time  # Only imported when needed
     main()
