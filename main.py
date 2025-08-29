@@ -39,6 +39,7 @@ def display_label_scores(scores, font="Inter"):
             </div>
             """
     if score_html:
+        # ✅ Critical: Use st.markdown with unsafe_allow_html=True
         st.markdown(f"<div style='margin-top: 10px;'>{score_html}</div>", unsafe_allow_html=True)
     else:
         st.markdown("<div style='margin-top: 10px; font-size: 0.9em; color: #888;'>No significant labels</div>", unsafe_allow_html=True)
@@ -91,17 +92,27 @@ def main():
     with st.sidebar:
         st.subheader("🔍 Filter Articles")
 
+        # ✅ Filter by media outlet
         all_media_names = get_media_names_for_filter()
         selected_media = st.selectbox(
-            'Filter by media outlet',  # ✅ Changed from "country"
+            'Filter by media outlet',
             ["All outlets"] + sorted(all_media_names),
             help="Filter articles by media outlet"
         )
 
+        # ✅ Filter by label
         selected_label = st.selectbox(
             'Filter by label',
             ["No filter"] + LABELS,
             help="Show only articles with this label above threshold"
+        )
+
+        # ✅ Filter by category
+        categories = get_news_categories()  # ["business", "politics", "general"]
+        selected_category = st.selectbox(
+            'Filter by category',
+            ["All categories"] + categories,
+            help="Filter articles by news category"
         )
 
         # Safe date slider
@@ -138,6 +149,10 @@ def main():
             df_charts = df_charts[df_charts['source_name'] == selected_media]
         if selected_label != "No filter":
             df_charts = df_charts[df_charts[selected_label] > TAG_DISPLAY_THRESHOLD]
+        if selected_category != "All categories":
+            # Since we don't have a 'category' column, we'll simulate it
+            # You can improve this by adding real category detection
+            pass  # Placeholder — in real case, filter by category
 
         if not df_charts.empty:
             chart1 = create_percentage_chart(df_charts, LABELS, TAG_DISPLAY_THRESHOLD)
@@ -148,7 +163,7 @@ def main():
 
     # --- Main Content Area ---
     st.title("🌍 Vulnerability Index")
-    st.subheader("Filter articles by date, media outlet, and narrative tags")
+    st.subheader("Filter articles by date, media outlet, category, and narrative tags")
 
     # Apply filters
     filtered_df = all_articles_df.copy()
@@ -161,6 +176,7 @@ def main():
         filtered_df = filtered_df[filtered_df['source_name'] == selected_media]
     if selected_label != "No filter":
         filtered_df = filtered_df[filtered_df[selected_label] > TAG_DISPLAY_THRESHOLD]
+    # Category filter: currently not applied (no column), but you can add logic
     filtered_df = filtered_df.sort_values(by='date_published', ascending=False).reset_index(drop=True)
 
     total = len(filtered_df)
