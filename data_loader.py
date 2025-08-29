@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
 # --- Configuration ---
+# Replace with your actual raw GitHub CSV URL
 LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250829083045.csv"
 
 # Toggle: Set to True during development to skip slow web scraping
@@ -158,10 +159,9 @@ def load_raw_data():
             'media_name': 'source_name'
         }, inplace=True)
 
-        # Convert date
-        df['date_published'] = pd.to_datetime(
-            df['date_published'], format="%Y-%m-%d %H:%M:%S.%f", errors='coerce'
-        ).dt.date
+        # ✅ Parse date format: '2025-08-27 00:04:51'
+        df['date_published'] = pd.to_datetime(df['date_published'], format="%Y-%m-%d %H:%M:%S", errors='coerce')
+        df['date_published'] = df['date_published'].dt.date  # Keep only the date part
 
         # Ensure required columns exist
         for col in ['headline', 'url', 'source_name', 'text', 'urlToImage']:
