@@ -66,9 +66,8 @@ def main():
     if 'current_page' not in st.session_state:
         st.session_state.current_page = 1
 
-    # --- Load Data First ---
-    with st.spinner("Loading articles..."):
-        all_articles_df = load_and_transform_data()
+    # --- Load Data ---
+    all_articles_df = load_and_transform_data()
 
     if all_articles_df.empty:
         st.warning("⚠️ No articles loaded.")
@@ -160,7 +159,6 @@ def main():
                 if pd.isna(img_url) or not str(img_url).startswith(('http://', 'https://')):
                     img_url = 'https://placehold.co/400x200/cccccc/000000?text=No+Image'
                 try:
-                    # ✅ Fixed: use_container_width instead of use_column_width
                     st.image(img_url, use_container_width=True)
                 except Exception:
                     st.image('https://placehold.co/400x200/cccccc/000000?text=Image+Error', use_container_width=True)
@@ -171,17 +169,9 @@ def main():
                 st.markdown(f"<h3>{row['headline']}</h3>", unsafe_allow_html=True)
                 date_str = row['date_published'].strftime('%Y-%m-%d') if pd.notna(row['date_published']) else "Unknown"
                 st.caption(f"📅 {date_str}")
-
-                # ✅ Show first 2-3 sentences only
-                text = row['text'] if pd.notna(row['text']) else "No summary available."
-                sentences = [s.strip() for s in text.split('.') if s.strip()]
-                summary = '. '.join(sentences[:3]) + '.' if sentences else text
-                st.write(summary)
-
-                # ✅ Keep the beautiful HTML label bars — exactly as you like them
+                st.write(row['text'] if pd.notna(row['text']) else "No summary available.")
                 scores = {lbl: row[lbl] for lbl in LABELS if lbl in row and pd.notna(row[lbl])}
                 display_label_scores(scores)
-
             st.markdown("---")
 
     if total_pages > 1:
@@ -199,5 +189,4 @@ def main():
 
 
 if __name__ == "__main__":
-    import time
     main()
