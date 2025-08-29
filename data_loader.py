@@ -11,7 +11,7 @@ from urllib.parse import urlparse
 
 # --- Configuration ---
 # Replace with your actual raw GitHub CSV URL
-LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250828145206.csv"
+LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250829083045.csv"
 
 # Toggle: Set to True during development to skip slow web scraping
 SKIP_WEB_SCRAPING = False  # Change to True for fast testing
