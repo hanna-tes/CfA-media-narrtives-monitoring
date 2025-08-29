@@ -1,4 +1,4 @@
-# data_loader.py (same as before)
+# data_loader.py
 
 import streamlit as st
 import pandas as pd
@@ -6,10 +6,13 @@ import random
 import time
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urlparse
 
+# --- Configuration ---
 LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250829083045.csv"
-SKIP_WEB_SCRAPING = False
+SKIP_WEB_SCRAPING = False  # Set to True during development
 
+# --- Keyword Labels ---
 KEYWORD_LABELS = {
     "Pro-Russia": ["russia", "kremlin", "putin", "russian forces", "moscow", "russian influence", "russia partnership"],
     "Anti-West": ["western sanctions", "western interference", "nato", "eu policy", "western powers", "western interests", "western hypocrisy"],
@@ -22,9 +25,11 @@ KEYWORD_LABELS = {
 }
 
 def get_news_categories():
+    """Returns supported news categories."""
     return ["business", "politics", "general"]
 
 def assign_labels_and_scores(df_articles):
+    """Assign content-based labels and scores."""
     labels = list(KEYWORD_LABELS.keys()) + ["Factual", "Neutral"]
     for label in labels:
         df_articles[label] = 0.0
@@ -50,6 +55,7 @@ def assign_labels_and_scores(df_articles):
     return df_articles
 
 def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
+    """Fetch article snippet or image."""
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
     }
@@ -60,7 +66,9 @@ def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
             soup = BeautifulSoup(response.text, 'html.parser')
 
             if fetch_type == "snippet":
-                containers = soup.find_all(['article', 'div'], class_=['article-body', 'content-body', 'story-content', 'main-content'])
+                containers = soup.find_all(['article', 'div'], class_=[
+                    'article-body', 'content-body', 'story-content', 'main-content'
+                ])
                 for container in containers:
                     p = container.find('p')
                     if p and p.get_text(strip=True):
@@ -84,10 +92,11 @@ def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
 
         except Exception:
             time.sleep(delay * (i + 1))
-    return "No summary available."
+    return None
 
 @st.cache_data(ttl=3600)
 def load_raw_data():
+    """Load and clean raw data."""
     try:
         df = pd.read_csv(LOCAL_DATA_FILE)
         df.rename(columns={
@@ -117,6 +126,7 @@ def get_media_names_for_filter():
     return get_media_names_cached()
 
 def enrich_articles_with_scraping(df):
+    """Enrich articles with snippets and images."""
     if SKIP_WEB_SCRAPING:
         df['text'] = df['headline'].apply(lambda x: f"{str(x)[:250]}..." if pd.notna(x) else "No summary available.")
         df['urlToImage'] = None
@@ -146,12 +156,31 @@ def enrich_articles_with_scraping(df):
         return df
 
     for url in urls_to_fetch:
+        # Fetch snippet
         if url not in scraped_text:
             snippet = fetch_content_with_retry(url, "snippet")
-            scraped_text[url] = snippet or f"{row['headline'][:200]}..." if pd.notna(row['headline']) else "No summary available."
+            scraped_text[url] = snippet or f"{df[df['url']==url]['headline'].iloc[0][:200]}..." \
+                                 if not df[df['url']==url].empty else "No summary available."
 
+        # Fetch image
         if url not in scraped_image:
             image = fetch_content_with_retry(url, "image")
+
+            # Fallback 1: Use media logo from domain
+            if not image:
+                try:
+                    parsed_url = urlparse(url)
+                    domain = parsed_url.netloc
+                    if domain.startswith('www.'):
+                        domain = domain[4:]
+                    image = f"https://logo.clearbit.com/{domain}"
+                except Exception:
+                    image = None
+
+            # Fallback 2: Placeholder
+            if not image:
+                image = 'https://placehold.co/400x200/cccccc/000000?text=No+Image'
+
             scraped_image[url] = image
 
     st.session_state.scraped_data['url_to_text'] = scraped_text
