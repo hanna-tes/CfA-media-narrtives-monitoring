@@ -60,33 +60,40 @@ def create_percentage_chart(df_filtered, labels, threshold):
     ).properties(title='Percentage of Articles with Labels')
 
 
-def create_average_label_scores_chart(avg_scores):
-    df = avg_scores.reset_index()
-    df.columns = ['label', 'average_score']
-    df['average_score'] = (df['average_score'] * 100).round(1)
-    if df['average_score'].sum() == 0:
-        return None
-    return alt.Chart(df).mark_bar().encode(
-        x=alt.X('average_score:Q', title='Average Score (%)', axis=alt.Axis(format='.0f')),
-        y=alt.Y('label:N', sort='-x', title=''),
-        tooltip=[
-            alt.Tooltip('label:N', title='Label'),
-            alt.Tooltip('average_score:Q', format='.1f', title='Avg Score')
-        ]
-    ).properties(title='Average Label Scores')
-
-
 def main():
     st.set_page_config(page_title="Vulnerability Index", layout="wide")
 
     if 'current_page' not in st.session_state:
         st.session_state.current_page = 1
 
+    # --- Load Data First ---
+    with st.spinner("Loading and preprocessing articles..."):
+        progress_text = st.empty()
+        progress_bar = st.progress(0)
+
+        all_articles_df = load_and_transform_data()
+
+        if all_articles_df.empty:
+            progress_text.error("⚠️ No articles loaded.")
+            st.stop()
+
+        # Simulate progress (actual work is in data_loader)
+        for i in range(100):
+            time.sleep(0.01)
+            progress_bar.progress((i + 1) / 100)
+        time.sleep(0.2)
+        progress_text.success(f"✅ Successfully loaded {len(all_articles_df)} articles.")
+        progress_bar.empty()
+
     # --- Sidebar ---
     with st.sidebar:
+        # Move status messages to sidebar
+        st.markdown("### 📊 Status")
+        st.success(f"✅ {len(all_articles_df)} articles loaded.")
+
         with st.expander("📘 Help: How to use this tool"):
-            st.write("""
-                Explore a collection of articles filtered by **media outlet**, **date**, and **narrative tags**.
+            st.write(f"""
+                Explore **{len(all_articles_df)} articles** filtered by outlet, date, and narrative tags.
                 
                 ### Filtering Options
                 - **Select a country**: Filter by media outlet.
@@ -146,25 +153,6 @@ def main():
     # --- Main Content Area ---
     st.title("🌍 Vulnerability Index")
     st.subheader("Filter articles by date, country, and narrative tags")
-
-    # Load data with progress bar
-    with st.spinner("Loading and preprocessing articles..."):
-        progress_text = st.empty()
-        progress_bar = st.progress(0)
-
-        all_articles_df = load_and_transform_data()
-
-        if not all_articles_df.empty:
-            for i in range(100):
-                time.sleep(0.01)
-                progress_bar.progress((i + 1) / 100)
-            time.sleep(0.2)
-            progress_text.success(f"✅ Successfully loaded {len(all_articles_df)} articles.")
-        else:
-            progress_text.error("⚠️ No articles loaded.")
-            st.stop()
-
-        progress_bar.empty()
 
     # Apply filters
     filtered_df = all_articles_df.copy()
