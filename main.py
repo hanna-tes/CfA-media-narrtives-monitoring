@@ -66,35 +66,43 @@ def main():
     if 'current_page' not in st.session_state:
         st.session_state.current_page = 1
 
-    # --- Show Progress Bar During Load ---
+    # --- Load Data with Progress Bar ---
     with st.spinner("Loading articles..."):
         progress_bar = st.progress(0)
         status_text = st.empty()
 
+        # Simulate progress (actual work is in data_loader)
+        for i in range(100):
+            time.sleep(0.01)
+            progress_bar.progress((i + 1) / 100)
+
         # Load data
         all_articles_df = load_and_transform_data()
 
-        if all_articles_df.empty:
-            st.warning("⚠️ No articles loaded.")
-            st.stop()
-
-        # Simulate progress feedback (actual work is in data_loader)
-        for i in range(100):
-            time.sleep(0.01)  # Adjust based on real load time
-            progress_bar.progress((i + 1) / 100)
-
-        # ✅ Clear progress bar and status text — no success message
+        # Clear progress bar and status text
         progress_bar.empty()
-        status_text.empty()  # This removes the message
+        status_text.empty()
+
+    if all_articles_df.empty:
+        st.warning("⚠️ No articles loaded.")
+        st.stop()
 
     # --- Sidebar ---
     with st.sidebar:
         st.subheader("🔍 Filter Articles")
 
         all_media_names = get_media_names_for_filter()
-        selected_media = st.selectbox('Select a country', ["All countries"] + sorted(all_media_names))
+        selected_media = st.selectbox(
+            'Filter by media outlet',  # ✅ Changed from "country"
+            ["All outlets"] + sorted(all_media_names),
+            help="Filter articles by media outlet"
+        )
 
-        selected_label = st.selectbox('Filter by label', ["No filter"] + LABELS)
+        selected_label = st.selectbox(
+            'Filter by label',
+            ["No filter"] + LABELS,
+            help="Show only articles with this label above threshold"
+        )
 
         # Safe date slider
         valid_dates = pd.to_datetime(all_articles_df['date_published'], errors='coerce').dropna()
@@ -126,7 +134,7 @@ def main():
             (df_charts['date_published'].dt.date >= timeline[0]) &
             (df_charts['date_published'].dt.date <= timeline[1])
         ]
-        if selected_media != "All countries":
+        if selected_media != "All outlets":
             df_charts = df_charts[df_charts['source_name'] == selected_media]
         if selected_label != "No filter":
             df_charts = df_charts[df_charts[selected_label] > TAG_DISPLAY_THRESHOLD]
@@ -140,7 +148,7 @@ def main():
 
     # --- Main Content Area ---
     st.title("🌍 Vulnerability Index")
-    st.subheader("Filter articles by date, country, and narrative tags")
+    st.subheader("Filter articles by date, media outlet, and narrative tags")
 
     # Apply filters
     filtered_df = all_articles_df.copy()
@@ -149,7 +157,7 @@ def main():
         (filtered_df['date_published'].dt.date >= timeline[0]) &
         (filtered_df['date_published'].dt.date <= timeline[1])
     ]
-    if selected_media != "All countries":
+    if selected_media != "All outlets":
         filtered_df = filtered_df[filtered_df['source_name'] == selected_media]
     if selected_label != "No filter":
         filtered_df = filtered_df[filtered_df[selected_label] > TAG_DISPLAY_THRESHOLD]
@@ -173,14 +181,16 @@ def main():
                 if pd.isna(img_url) or not str(img_url).startswith(('http://', 'https://')):
                     img_url = 'https://placehold.co/400x200/cccccc/000000?text=No+Image'
                 try:
-                    st.image(img_url, use_container_width=True)
+                    # ✅ Make image clickable
+                    st.markdown(f"<a href='{row['url']}' target='_blank'><img src='{img_url}' style='width:100%; border-radius: 8px;'></a>", unsafe_allow_html=True)
                 except Exception:
-                    st.image('https://placehold.co/400x200/cccccc/000000?text=Image+Error', use_container_width=True)
+                    st.markdown(f"<a href='{row['url']}' target='_blank'><img src='https://placehold.co/400x200/cccccc/000000?text=Image+Error' style='width:100%; border-radius: 8px;'></a>", unsafe_allow_html=True)
                 source = row['source_name']
                 display_tags([source] if pd.notna(source) else ["Unknown"])
 
             with col2:
-                st.markdown(f"<h3>{row['headline']}</h3>", unsafe_allow_html=True)
+                # ✅ Make headline clickable
+                st.markdown(f"<h3><a href='{row['url']}' target='_blank' style='color: inherit; text-decoration: none;'>{row['headline']}</a></h3>", unsafe_allow_html=True)
                 date_str = row['date_published'].strftime('%Y-%m-%d') if pd.notna(row['date_published']) else "Unknown"
                 st.caption(f"📅 {date_str}")
                 st.write(row['text'] if pd.notna(row['text']) else "No summary available.")
@@ -203,5 +213,5 @@ def main():
 
 
 if __name__ == "__main__":
-    import time  # Only imported when needed
+    import time
     main()
