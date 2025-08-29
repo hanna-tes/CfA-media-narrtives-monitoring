@@ -10,7 +10,6 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
 # --- Configuration ---
-# Replace with your actual raw GitHub CSV URL
 LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250829083045.csv"
 
 # Toggle: Set to True during development to skip slow web scraping
@@ -142,6 +141,8 @@ def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
 
 def is_valid_image_url(url):
     """Filter out ad banners, logos, placeholders."""
+    if not url:
+        return False
     url_lower = url.lower()
     blocked = ['logo', 'ad.', 'banner', 'sponsor', 'doubleclick', 'placeholder', 'icon', 'gif']
     return all(word not in url_lower for word in blocked)
@@ -169,7 +170,7 @@ def load_raw_data():
 
         return df.reset_index(drop=True)
     except Exception as e:
-        st.error(f"❌ Error loading data: {e}")
+        st.error(f"❌ Error loading data from URL: {LOCAL_DATA_FILE}. Check the link or format. Error: {e}")
         return pd.DataFrame()
 
 @st.cache_data(ttl=3600)
@@ -242,8 +243,8 @@ def enrich_articles_with_scraping(df):
             else:
                 failed_snippets.add(url)
                 # Fallback: use headline
-                scraped_text[url] = df[df['url'] == url]['headline'].iloc[0][:250] + "..." \
-                    if not df[df['url'] == url].empty else "No snippet."
+                headline = df[df['url'] == url]['headline'].iloc[0] if not df[df['url'] == url].empty else "No headline"
+                scraped_text[url] = f"{str(headline)[:250]}..."
 
         # Fetch image
         if url not in scraped_image and url not in failed_images:
@@ -295,8 +296,10 @@ def load_and_transform_data():
     all_labels = ["Factual", "Neutral", "Pro-Russia", "Anti-West", "Anti-France", "Sensationalist", "Anti-US", "Opinion"]
     final_cols = ['headline', 'text', 'url', 'urlToImage', 'date_published', 'source_name'] + all_labels
 
+    # Ensure all required columns exist
     for col in final_cols:
         if col not in df.columns:
             df[col] = None
 
-    return df[df[final_cols]]
+    # ✅ Correct: Select columns safely
+    return df[final_cols].copy()
