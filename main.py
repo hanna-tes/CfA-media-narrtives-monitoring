@@ -25,24 +25,33 @@ def display_tags(tags, font="Inter"):
 
 
 def display_label_scores(scores, font="Inter"):
-    score_html = ""
+    """
+    Displays label scores as horizontal bars.
+    Uses st.markdown with unsafe_allow_html=True to render HTML.
+    """
+    # Sort by score, descending
     sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+    
+    # Start building HTML
+    html = "<div style='margin-top: 10px;'>"
+    
     for label, score in sorted_scores:
         if score > TAG_DISPLAY_THRESHOLD:
-            score_html += f"""
+            width = score * 100
+            html += f"""
             <div style='display: flex; align-items: center; margin-bottom: 2px; font-family: {font};'>
                 <span style='width: 80px; font-size: 0.9em; text-align: left; margin-right: 5px;'>{label}:</span>
                 <div style='flex-grow: 1; height: 10px; background-color: #f0f0f0; border-radius: 3px; overflow: hidden;'>
-                    <div style='width: {score*100}%; height: 100%; background-color: #4CAF50; border-radius: 3px;'></div>
+                    <div style='width: {width:.1f}%; height: 100%; background-color: #4CAF50; border-radius: 3px;'></div>
                 </div>
-                <span style='margin-left: 5px; font-size: 0.9em; font-weight: bold;'>{score*100:.0f}%</span>
+                <span style='margin-left: 5px; font-size: 0.9em; font-weight: bold;'>{width:.0f}%</span>
             </div>
             """
-    if score_html:
-        # ✅ Critical: Use st.markdown with unsafe_allow_html=True
-        st.markdown(f"<div style='margin-top: 10px;'>{score_html}</div>", unsafe_allow_html=True)
-    else:
-        st.markdown("<div style='margin-top: 10px; font-size: 0.9em; color: #888;'>No significant labels</div>", unsafe_allow_html=True)
+    
+    html += "</div>"
+    
+    # ✅ Critical: Use st.markdown with unsafe_allow_html=True
+    st.markdown(html, unsafe_allow_html=True)
 
 
 def create_percentage_chart(df_filtered, labels, threshold):
