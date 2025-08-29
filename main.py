@@ -3,6 +3,7 @@
 import streamlit as st
 import pandas as pd
 import altair as alt
+from datetime import datetime, date
 from data_loader import load_and_transform_data, get_news_categories, get_media_names_for_filter
 
 TAG_DISPLAY_THRESHOLD = 0.15
@@ -13,6 +14,7 @@ LABELS = sorted([
     "Sensationalist", "Anti-US", "Opinion"
 ], reverse=True)
 
+
 def display_tags(tags, font="Inter"):
     tag_html = "".join([
         f"<span style='background-color: #e0e0e0; color: #333; padding: 3px 8px; margin: 2px; "
@@ -20,6 +22,7 @@ def display_tags(tags, font="Inter"):
         for tag in tags
     ])
     st.markdown(f"<div style='display: flex; flex-wrap: wrap; margin-top: 5px;'>{tag_html}</div>", unsafe_allow_html=True)
+
 
 def display_label_scores(scores, font="Inter"):
     score_html = ""
@@ -40,6 +43,7 @@ def display_label_scores(scores, font="Inter"):
     else:
         st.markdown("<div style='margin-top: 10px; font-size: 0.9em; color: #888;'>No significant labels</div>", unsafe_allow_html=True)
 
+
 def create_percentage_chart(df_filtered, labels, threshold):
     data = {label: (df_filtered[label] > threshold).sum() for label in labels}
     df = pd.DataFrame(data.items(), columns=['label', 'count'])
@@ -51,6 +55,7 @@ def create_percentage_chart(df_filtered, labels, threshold):
         y=alt.Y('label:N', sort='-x', title=''),
         tooltip=[alt.Tooltip('label:N'), alt.Tooltip('percentage:Q', format='.1f') + '%']
     ).properties(title='Percentage of Articles with Labels')
+
 
 def create_average_label_scores_chart(avg_scores):
     df = avg_scores.reset_index()
@@ -64,13 +69,34 @@ def create_average_label_scores_chart(avg_scores):
         tooltip=[alt.Tooltip('label:N'), alt.Tooltip('average_score:Q', format='.1f') + '%']
     ).properties(title='Average Label Scores')
 
+
 def main():
     st.set_page_config(page_title="Vulnerability Index", layout="wide")
 
     if 'current_page' not in st.session_state:
         st.session_state.current_page = 1
 
-    all_articles_df = load_and_transform_data()
+    # Show preprocessing status with progress bar
+    with st.spinner("Loading and preprocessing articles..."):
+        progress_text = st.empty()
+        progress_bar = st.progress(0)
+
+        # Load data
+        all_articles_df = load_and_transform_data()
+
+        if not all_articles_df.empty:
+            # Simulate progress for visual feedback (actual progress is in data_loader)
+            for i in range(100):
+                time.sleep(0.01)  # Just for visual feedback
+                progress_bar.progress((i + 1) / 100)
+            time.sleep(0.2)
+            progress_text.success(f"✅ Successfully loaded {len(all_articles_df)} articles.")
+        else:
+            progress_text.error("⚠️ No articles loaded.")
+            st.stop()
+
+        progress_bar.empty()
+
     if all_articles_df.empty:
         st.warning("⚠️ No articles loaded.")
         return
@@ -86,16 +112,16 @@ def main():
 
         selected_label = st.selectbox('Filter by label', ["No filter"] + LABELS)
 
-        # ✅ Fixed: Safe date slider
+        # ✅ Fixed: Convert to `datetime.date`, not `pd.Timestamp`
         valid_dates = pd.to_datetime(all_articles_df['date_published'], errors='coerce').dropna()
         if valid_dates.empty:
-            min_date = pd.to_datetime("2020-01-01")
-            max_date = pd.to_datetime("2030-01-01")
+            min_date = date(2020, 1, 1)
+            max_date = date(2030, 1, 1)
         else:
-            min_date = valid_dates.min()
-            max_date = valid_dates.max()
-        min_date = pd.Timestamp(min_date).tz_localize(None)
-        max_date = pd.Timestamp(max_date).tz_localize(None)
+            min_date = valid_dates.min().date()  # Convert Timestamp → date
+            max_date = valid_dates.max().date()
+
+        # Now use `date` objects (safe for st.slider)
         timeline = st.slider(
             "Choose a time period",
             min_value=min_date,
@@ -109,8 +135,8 @@ def main():
         df_charts = all_articles_df.copy()
         df_charts['date_published'] = pd.to_datetime(df_charts['date_published'], errors='coerce')
         df_charts = df_charts[
-            (df_charts['date_published'] >= timeline[0]) &
-            (df_charts['date_published'] <= timeline[1])
+            (df_charts['date_published'].dt.date >= timeline[0]) &
+            (df_charts['date_published'].dt.date <= timeline[1])
         ]
         if selected_media != "All countries":
             df_charts = df_charts[df_charts['source_name'] == selected_media]
@@ -133,8 +159,8 @@ def main():
     filtered_df = all_articles_df.copy()
     filtered_df['date_published'] = pd.to_datetime(filtered_df['date_published'], errors='coerce')
     filtered_df = filtered_df[
-        (filtered_df['date_published'] >= timeline[0]) &
-        (filtered_df['date_published'] <= timeline[1])
+        (filtered_df['date_published'].dt.date >= timeline[0]) &
+        (filtered_df['date_published'].dt.date <= timeline[1])
     ]
     if selected_media != "All countries":
         filtered_df = filtered_df[filtered_df['source_name'] == selected_media]
@@ -161,7 +187,7 @@ def main():
                     img_url = 'https://placehold.co/400x200/cccccc/000000?text=No+Image'
                 try:
                     st.image(img_url, use_column_width=True)
-                except:
+                except Exception:
                     st.image('https://placehold.co/400x200/cccccc/000000?text=Image+Error', use_column_width=True)
                 source = row['source_name']
                 display_tags([source] if pd.notna(source) else ["Unknown"])
@@ -189,5 +215,7 @@ def main():
                 st.session_state.current_page += 1
                 st.rerun()
 
+
 if __name__ == "__main__":
+    import time  # Import here to avoid global pollution
     main()
