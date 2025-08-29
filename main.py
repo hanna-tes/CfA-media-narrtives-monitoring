@@ -53,7 +53,10 @@ def create_percentage_chart(df_filtered, labels, threshold):
     return alt.Chart(df).mark_bar().encode(
         x=alt.X('percentage:Q', title='Percentage (%)', axis=alt.Axis(format='.0f')),
         y=alt.Y('label:N', sort='-x', title=''),
-        tooltip=[alt.Tooltip('label:N'), alt.Tooltip('percentage:Q', format='.1f') + '%']
+        tooltip=[
+            alt.Tooltip('label:N', title='Label'),
+            alt.Tooltip('percentage:Q', format='.1f', title='Percentage')
+        ]
     ).properties(title='Percentage of Articles with Labels')
 
 
@@ -66,7 +69,10 @@ def create_average_label_scores_chart(avg_scores):
     return alt.Chart(df).mark_bar().encode(
         x=alt.X('average_score:Q', title='Average Score (%)', axis=alt.Axis(format='.0f')),
         y=alt.Y('label:N', sort='-x', title=''),
-        tooltip=[alt.Tooltip('label:N'), alt.Tooltip('average_score:Q', format='.1f') + '%']
+        tooltip=[
+            alt.Tooltip('label:N', title='Label'),
+            alt.Tooltip('average_score:Q', format='.1f', title='Avg Score')
+        ]
     ).properties(title='Average Label Scores')
 
 
@@ -76,34 +82,17 @@ def main():
     if 'current_page' not in st.session_state:
         st.session_state.current_page = 1
 
-    # Show preprocessing with progress bar
-    with st.spinner("Loading and preprocessing articles..."):
-        progress_text = st.empty()
-        progress_bar = st.progress(0)
-
-        # Load data
-        all_articles_df = load_and_transform_data()
-
-        if not all_articles_df.empty:
-            # Simulate progress for visual feedback (actual work is in data_loader)
-            for i in range(100):
-                time.sleep(0.01)
-                progress_bar.progress((i + 1) / 100)
-            time.sleep(0.2)
-            progress_text.success(f"✅ Successfully loaded {len(all_articles_df)} articles.")
-        else:
-            progress_text.error("⚠️ No articles loaded.")
-            st.stop()
-
-        progress_bar.empty()
-
-    if all_articles_df.empty:
-        st.warning("⚠️ No articles loaded.")
-        return
-
+    # --- Sidebar ---
     with st.sidebar:
-        with st.expander("📘 Help"):
-            st.write(f"Explore **{len(all_articles_df)} articles** filtered by outlet, date, and labels.")
+        with st.expander("📘 Help: How to use this tool"):
+            st.write("""
+                Explore a collection of articles filtered by **media outlet**, **date**, and **narrative tags**.
+                
+                ### Filtering Options
+                - **Select a country**: Filter by media outlet.
+                - **Filter by label**: Show only articles with a specific label above threshold.
+                - **Choose a time period**: Use the slider to select a date range.
+            """)
 
         st.subheader("🔍 Filter Articles")
 
@@ -112,7 +101,7 @@ def main():
 
         selected_label = st.selectbox('Filter by label', ["No filter"] + LABELS)
 
-        # ✅ Safe date slider: handles single-date datasets
+        # Safe date slider: handles single-date datasets
         valid_dates = pd.to_datetime(all_articles_df['date_published'], errors='coerce').dropna()
         if valid_dates.empty:
             min_date = date(2020, 1, 1)
@@ -121,7 +110,6 @@ def main():
             min_date = valid_dates.min().date()
             max_date = valid_dates.max().date()
 
-        # Fix: If min == max, add one day to max so slider works
         if min_date == max_date:
             max_date = max_date + timedelta(days=1)
 
@@ -135,9 +123,10 @@ def main():
 
         st.divider()
 
+        # --- Charts in Sidebar ---
+        st.subheader("📊 Percentage of Articles with Labels")
         df_charts = all_articles_df.copy()
         df_charts['date_published'] = pd.to_datetime(df_charts['date_published'], errors='coerce')
-        # Compare dates using .dt.date
         df_charts = df_charts[
             (df_charts['date_published'].dt.date >= timeline[0]) &
             (df_charts['date_published'].dt.date <= timeline[1])
@@ -151,15 +140,33 @@ def main():
             chart1 = create_percentage_chart(df_charts, LABELS, TAG_DISPLAY_THRESHOLD)
             if chart1:
                 st.altair_chart(chart1, use_container_width=True, theme=None)
-            chart2 = create_average_label_scores_chart(df_charts[LABELS].mean().sort_values(ascending=False))
-            if chart2:
-                st.altair_chart(chart2, use_container_width=True, theme=None)
         else:
-            st.info("No data for charts.")
+            st.info("No data to display charts.")
 
+    # --- Main Content Area ---
     st.title("🌍 Vulnerability Index")
     st.subheader("Filter articles by date, country, and narrative tags")
 
+    # Load data with progress bar
+    with st.spinner("Loading and preprocessing articles..."):
+        progress_text = st.empty()
+        progress_bar = st.progress(0)
+
+        all_articles_df = load_and_transform_data()
+
+        if not all_articles_df.empty:
+            for i in range(100):
+                time.sleep(0.01)
+                progress_bar.progress((i + 1) / 100)
+            time.sleep(0.2)
+            progress_text.success(f"✅ Successfully loaded {len(all_articles_df)} articles.")
+        else:
+            progress_text.error("⚠️ No articles loaded.")
+            st.stop()
+
+        progress_bar.empty()
+
+    # Apply filters
     filtered_df = all_articles_df.copy()
     filtered_df['date_published'] = pd.to_datetime(filtered_df['date_published'], errors='coerce')
     filtered_df = filtered_df[
@@ -221,5 +228,5 @@ def main():
 
 
 if __name__ == "__main__":
-    import time  # Only imported when needed
+    import time
     main()
