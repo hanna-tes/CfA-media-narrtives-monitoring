@@ -67,40 +67,15 @@ def main():
         st.session_state.current_page = 1
 
     # --- Load Data First ---
-    with st.spinner("Loading and preprocessing articles..."):
-        progress_text = st.empty()
-        progress_bar = st.progress(0)
-
+    with st.spinner("Loading articles..."):
         all_articles_df = load_and_transform_data()
 
-        if all_articles_df.empty:
-            progress_text.error("⚠️ No articles loaded.")
-            st.stop()
-
-        # Simulate progress (actual work is in data_loader)
-        for i in range(100):
-            time.sleep(0.01)
-            progress_bar.progress((i + 1) / 100)
-        time.sleep(0.2)
-        progress_text.success(f"✅ Successfully loaded {len(all_articles_df)} articles.")
-        progress_bar.empty()
+    if all_articles_df.empty:
+        st.warning("⚠️ No articles loaded.")
+        st.stop()
 
     # --- Sidebar ---
     with st.sidebar:
-        # Move status messages to sidebar
-        st.markdown("### 📊 Status")
-        st.success(f"✅ {len(all_articles_df)} articles loaded.")
-
-        with st.expander("📘 Help: How to use this tool"):
-            st.write(f"""
-                Explore **{len(all_articles_df)} articles** filtered by outlet, date, and narrative tags.
-                
-                ### Filtering Options
-                - **Select a country**: Filter by media outlet.
-                - **Filter by label**: Show only articles with a specific label above threshold.
-                - **Choose a time period**: Use the slider to select a date range.
-            """)
-
         st.subheader("🔍 Filter Articles")
 
         all_media_names = get_media_names_for_filter()
@@ -108,7 +83,7 @@ def main():
 
         selected_label = st.selectbox('Filter by label', ["No filter"] + LABELS)
 
-        # Safe date slider: handles single-date datasets
+        # Safe date slider
         valid_dates = pd.to_datetime(all_articles_df['date_published'], errors='coerce').dropna()
         if valid_dates.empty:
             min_date = date(2020, 1, 1)
@@ -185,9 +160,10 @@ def main():
                 if pd.isna(img_url) or not str(img_url).startswith(('http://', 'https://')):
                     img_url = 'https://placehold.co/400x200/cccccc/000000?text=No+Image'
                 try:
-                    st.image(img_url, use_column_width=True)
+                    # ✅ Fixed: use_container_width instead of use_column_width
+                    st.image(img_url, use_container_width=True)
                 except Exception:
-                    st.image('https://placehold.co/400x200/cccccc/000000?text=Image+Error', use_column_width=True)
+                    st.image('https://placehold.co/400x200/cccccc/000000?text=Image+Error', use_container_width=True)
                 source = row['source_name']
                 display_tags([source] if pd.notna(source) else ["Unknown"])
 
@@ -195,10 +171,17 @@ def main():
                 st.markdown(f"<h3>{row['headline']}</h3>", unsafe_allow_html=True)
                 date_str = row['date_published'].strftime('%Y-%m-%d') if pd.notna(row['date_published']) else "Unknown"
                 st.caption(f"📅 {date_str}")
-                text = row['text'] if pd.notna(row['text']) else "No snippet."
-                st.html(f"{text} <a href='{row['url']}' target='_blank' style='color: #1f77b4;'>→ Read full article</a>")
+
+                # ✅ Show first 2-3 sentences only
+                text = row['text'] if pd.notna(row['text']) else "No summary available."
+                sentences = [s.strip() for s in text.split('.') if s.strip()]
+                summary = '. '.join(sentences[:3]) + '.' if sentences else text
+                st.write(summary)
+
+                # ✅ Keep the beautiful HTML label bars — exactly as you like them
                 scores = {lbl: row[lbl] for lbl in LABELS if lbl in row and pd.notna(row[lbl])}
                 display_label_scores(scores)
+
             st.markdown("---")
 
     if total_pages > 1:
