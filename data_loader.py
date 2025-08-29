@@ -121,22 +121,30 @@ def get_media_names_for_filter():
     return get_media_names_cached()
 
 def enrich_articles_with_scraping(df):
+    """Enrich articles with snippets and images — silently skip failures."""
     if SKIP_WEB_SCRAPING:
-        df['text'] = df['headline'].apply(lambda x: f"{str(x)[:250]}..." if pd.notna(x) else "No snippet.")
+        st.info("⏭️ Web scraping skipped. Using fallbacks.")
+        df['text'] = df['headline'].apply(lambda x: f"{str(x)[:250]}..." if pd.notna(x) else "No snippet available.")
         df['urlToImage'] = None
         return df
 
+    # Initialize session state
     if 'scraped_data' not in st.session_state:
-        st.session_state.scraped_data = {'url_to_text': {}, 'url_to_image': {}}
+        st.session_state.scraped_data = {
+            'url_to_text': {},
+            'url_to_image': {}
+        }
 
     scraped_text = st.session_state.scraped_data['url_to_text']
     scraped_image = st.session_state.scraped_data['url_to_image']
 
+    # Identify URLs that still need processing
     urls_to_fetch = []
     for _, row in df.iterrows():
         url = row['url']
         needs_text = pd.isna(row['text']) or not str(row['text']).strip()
         needs_image = pd.isna(row['urlToImage']) or not str(row['urlToImage']).strip()
+
         if (needs_text and url not in scraped_text) or (needs_image and url not in scraped_image):
             urls_to_fetch.append(url)
 
@@ -145,20 +153,43 @@ def enrich_articles_with_scraping(df):
         df['urlToImage'] = df['url'].map(scraped_image).fillna(df['urlToImage'])
         return df
 
-    for url in urls_to_fetch:
+    # Show progress
+    st.info("Fetching content for articles. This may take a while...")
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+
+    total = len(urls_to_fetch)
+    for i, url in enumerate(urls_to_fetch):
+        status_text.text(f"Processing: {url[:60]}...")
+
+        # Fetch snippet
         if url not in scraped_text:
             snippet = fetch_content_with_retry(url, "snippet")
             scraped_text[url] = snippet or f"{df[df['url']==url]['headline'].iloc[0][:250]}..." \
-                                 if not df[df['url']==url].empty else "No snippet."
+                                 if not df[df['url']==url].empty else "No snippet available."
+
+        # Fetch image
         if url not in scraped_image:
             image = fetch_content_with_retry(url, "image")
-            scraped_image[url] = image
+            scraped_image[url] = image  # Can be None
 
+        progress_bar.progress((i + 1) / total)
+
+    # Save back to session state
     st.session_state.scraped_data['url_to_text'] = scraped_text
     st.session_state.scraped_data['url_to_image'] = scraped_image
 
+    # Apply to DataFrame
     df['text'] = df['url'].map(scraped_text).fillna(df['text'])
     df['urlToImage'] = df['url'].map(scraped_image).fillna(df['urlToImage'])
+
+    # Hide UI elements
+    progress_bar.empty()
+    status_text.empty()
+
+    # ✅ Success message only
+    st.success(f"✅ Successfully processed {len(urls_to_fetch)} articles.")
+
     return df
 
 def load_and_transform_data():
