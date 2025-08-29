@@ -3,7 +3,7 @@
 import streamlit as st
 import pandas as pd
 import altair as alt
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from data_loader import load_and_transform_data, get_news_categories, get_media_names_for_filter
 
 TAG_DISPLAY_THRESHOLD = 0.15
@@ -76,7 +76,7 @@ def main():
     if 'current_page' not in st.session_state:
         st.session_state.current_page = 1
 
-    # Show preprocessing status with progress bar
+    # Show preprocessing with progress bar
     with st.spinner("Loading and preprocessing articles..."):
         progress_text = st.empty()
         progress_bar = st.progress(0)
@@ -85,9 +85,9 @@ def main():
         all_articles_df = load_and_transform_data()
 
         if not all_articles_df.empty:
-            # Simulate progress for visual feedback (actual progress is in data_loader)
+            # Simulate progress for visual feedback (actual work is in data_loader)
             for i in range(100):
-                time.sleep(0.01)  # Just for visual feedback
+                time.sleep(0.01)
                 progress_bar.progress((i + 1) / 100)
             time.sleep(0.2)
             progress_text.success(f"✅ Successfully loaded {len(all_articles_df)} articles.")
@@ -112,16 +112,19 @@ def main():
 
         selected_label = st.selectbox('Filter by label', ["No filter"] + LABELS)
 
-        # ✅ Fixed: Convert to `datetime.date`, not `pd.Timestamp`
+        # ✅ Safe date slider: handles single-date datasets
         valid_dates = pd.to_datetime(all_articles_df['date_published'], errors='coerce').dropna()
         if valid_dates.empty:
             min_date = date(2020, 1, 1)
             max_date = date(2030, 1, 1)
         else:
-            min_date = valid_dates.min().date()  # Convert Timestamp → date
+            min_date = valid_dates.min().date()
             max_date = valid_dates.max().date()
 
-        # Now use `date` objects (safe for st.slider)
+        # Fix: If min == max, add one day to max so slider works
+        if min_date == max_date:
+            max_date = max_date + timedelta(days=1)
+
         timeline = st.slider(
             "Choose a time period",
             min_value=min_date,
@@ -134,6 +137,7 @@ def main():
 
         df_charts = all_articles_df.copy()
         df_charts['date_published'] = pd.to_datetime(df_charts['date_published'], errors='coerce')
+        # Compare dates using .dt.date
         df_charts = df_charts[
             (df_charts['date_published'].dt.date >= timeline[0]) &
             (df_charts['date_published'].dt.date <= timeline[1])
@@ -217,5 +221,5 @@ def main():
 
 
 if __name__ == "__main__":
-    import time  # Import here to avoid global pollution
+    import time  # Only imported when needed
     main()
