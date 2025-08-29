@@ -25,17 +25,13 @@ def display_tags(tags, font="Inter"):
 
 
 def display_label_scores(scores, font="Inter"):
-    """
-    Displays label scores as clean horizontal bars.
-    Uses minimal, single-line HTML to avoid rendering issues.
-    """
+    """Display label scores as clean horizontal bars."""
     sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
     
     html = "<div style='margin-top:10px;'>"
     for label, score in sorted_scores:
         if score > TAG_DISPLAY_THRESHOLD:
             width = score * 100
-            # ✅ Single-line HTML — no newlines, no indentation
             html += f"<div style='display:flex;align-items:center;margin-bottom:2px;font-family:{font};'>" \
                     f"<span style='width:80px;font-size:0.9em;text-align:left;margin-right:5px;'>{label}:</span>" \
                     f"<div style='flex-grow:1;height:10px;background-color:#f0f0f0;border-radius:3px;overflow:hidden;'>" \
@@ -45,7 +41,6 @@ def display_label_scores(scores, font="Inter"):
                     f"</div>"
     html += "</div>"
     
-    # ✅ Critical: Render HTML safely
     st.markdown(html, unsafe_allow_html=True)
 
 
@@ -76,7 +71,7 @@ def main():
         progress_bar = st.progress(0)
         status_text = st.empty()
 
-        # Simulate progress (actual work is in data_loader)
+        # Simulate progress
         for i in range(100):
             time.sleep(0.01)
             progress_bar.progress((i + 1) / 100)
@@ -96,7 +91,6 @@ def main():
     with st.sidebar:
         st.subheader("🔍 Filter Articles")
 
-        # ✅ Filter by media outlet
         all_media_names = get_media_names_for_filter()
         selected_media = st.selectbox(
             'Filter by media outlet',
@@ -104,18 +98,15 @@ def main():
             help="Filter articles by media outlet"
         )
 
-        # ✅ Filter by label
         selected_label = st.selectbox(
             'Filter by label',
             ["No filter"] + LABELS,
             help="Show only articles with this label above threshold"
         )
 
-        # ✅ Filter by category
-        categories = get_news_categories()  # ["business", "politics", "general"]
         selected_category = st.selectbox(
             'Filter by category',
-            ["All categories"] + categories,
+            ["All categories"] + get_news_categories(),
             help="Filter articles by news category"
         )
 
@@ -153,10 +144,6 @@ def main():
             df_charts = df_charts[df_charts['source_name'] == selected_media]
         if selected_label != "No filter":
             df_charts = df_charts[df_charts[selected_label] > TAG_DISPLAY_THRESHOLD]
-        # Category filter: currently not applied (no column), but you can add logic
-        if selected_category != "All categories":
-            # Placeholder: you can add real category detection later
-            pass
 
         if not df_charts.empty:
             chart1 = create_percentage_chart(df_charts, LABELS, TAG_DISPLAY_THRESHOLD)
@@ -180,7 +167,6 @@ def main():
         filtered_df = filtered_df[filtered_df['source_name'] == selected_media]
     if selected_label != "No filter":
         filtered_df = filtered_df[filtered_df[selected_label] > TAG_DISPLAY_THRESHOLD]
-    # Add category filtering logic here if you have a 'category' column
     filtered_df = filtered_df.sort_values(by='date_published', ascending=False).reset_index(drop=True)
 
     total = len(filtered_df)
@@ -201,7 +187,6 @@ def main():
                 if pd.isna(img_url) or not str(img_url).startswith(('http://', 'https://')):
                     img_url = 'https://placehold.co/400x200/cccccc/000000?text=No+Image'
                 try:
-                    # ✅ Make image clickable
                     st.markdown(f"<a href='{row['url']}' target='_blank'><img src='{img_url}' style='width:100%; border-radius: 8px;'></a>", unsafe_allow_html=True)
                 except Exception:
                     st.markdown(f"<a href='{row['url']}' target='_blank'><img src='https://placehold.co/400x200/cccccc/000000?text=Image+Error' style='width:100%; border-radius: 8px;'></a>", unsafe_allow_html=True)
@@ -209,13 +194,10 @@ def main():
                 display_tags([source] if pd.notna(source) else ["Unknown"])
 
             with col2:
-                # ✅ Make headline clickable
                 st.markdown(f"<h3><a href='{row['url']}' target='_blank' style='color: inherit; text-decoration: none;'>{row['headline']}</a></h3>", unsafe_allow_html=True)
                 date_str = row['date_published'].strftime('%Y-%m-%d') if pd.notna(row['date_published']) else "Unknown"
                 st.caption(f"📅 {date_str}")
                 st.write(row['text'] if pd.notna(row['text']) else "No summary available.")
-                
-                # ✅ Display label scores (HTML bars)
                 scores = {lbl: row[lbl] for lbl in LABELS if lbl in row and pd.notna(row[lbl])}
                 display_label_scores(scores)
             st.markdown("---")
