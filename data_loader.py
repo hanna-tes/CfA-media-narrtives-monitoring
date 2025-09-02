@@ -143,7 +143,11 @@ def get_media_names_for_filter():
 
 def summarize_with_llama(text):
     """Cached LLM summarization"""
-    # ✅ Critical: Use cache to avoid repeated LLM calls
+    # ✅ PROPER INITIALIZATION - check every time the function is called
+    if 'llm_cache' not in st.session_state:
+        st.session_state.llm_cache = {}
+    
+    # Now we know llm_cache exists
     if text in st.session_state.llm_cache:
         return st.session_state.llm_cache[text]
     
@@ -151,17 +155,16 @@ def summarize_with_llama(text):
         return text[:300] + "..." if text else "No summary available."
     
     try:
-        # Only summarize once per unique text
         chat_completion = client.chat.completions.create(
             messages=[
                 {"role": "system", "content": "Summarize this article in one short paragraph. Focus on the main topic. Remove author names, publication dates, and promotional text. Keep it neutral and factual."},
                 {"role": "user", "content": text[:3000]}
             ],
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            model="meta-llama/llama-4-scout-17b-16e-instruct",  # ✅ CORRECT MODEL ID
             temperature=0.3,
             max_tokens=150,
             top_p=1.0
-       )
+        )
         summary = chat_completion.choices[0].message.content.strip()
         st.session_state.llm_cache[text] = summary
         return summary
