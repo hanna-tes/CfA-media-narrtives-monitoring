@@ -9,6 +9,14 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 from groq import Groq
 
+try:
+    # Get API key from Streamlit secrets (the correct way)
+    GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+    client = Groq(api_key=GROQ_API_KEY)
+except Exception as e:
+    client = None
+    st.warning(f"⚠️ Groq API key not found. Error: {e}. Running without LLM summarization.")
+
 # --- Configuration ---
 LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250829083045.csv"
 SKIP_WEB_SCRAPING = False  # Set to True during development
