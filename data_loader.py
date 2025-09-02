@@ -155,13 +155,13 @@ def summarize_with_llama(text):
         chat_completion = client.chat.completions.create(
             messages=[
                 {"role": "system", "content": "Summarize this article in one short paragraph. Focus on the main topic. Remove author names, publication dates, and promotional text. Keep it neutral and factual."},
-                {"role": "user", "content": text[:3000]}  # Stay under token limit
+                {"role": "user", "content": text[:3000]}
             ],
-            model="llama-3.1-70b-versatile",
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
             temperature=0.3,
             max_tokens=150,
             top_p=1.0
-        )
+       )
         summary = chat_completion.choices[0].message.content.strip()
         st.session_state.llm_cache[text] = summary
         return summary
