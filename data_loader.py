@@ -1,4 +1,4 @@
-# data_loader.py (updated with progress_callback)
+# data_loader.py
 
 import streamlit as st
 import pandas as pd
@@ -12,18 +12,6 @@ from groq import Groq
 # --- Configuration ---
 LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250829083045.csv"
 SKIP_WEB_SCRAPING = False  # Set to True during development
-
-# --- Initialize LLM Cache ---
-if 'llm_cache' not in st.session_state:
-    st.session_state.llm_cache = {}
-
-# --- Initialize Groq Client ---
-try:
-    GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
-    client = Groq(api_key=GROQ_API_KEY)
-except:
-    client = None
-    st.warning("⚠️ Groq API key not found. Running without LLM summarization.")
 
 # --- Keyword Labels ---
 KEYWORD_LABELS = {
@@ -142,35 +130,43 @@ def get_media_names_for_filter():
     return get_media_names_cached()
 
 def summarize_with_llama(text):
-    """Cached LLM summarization"""
-    # ✅ PROPER INITIALIZATION - check every time the function is called
+    """Cached LLM summarization with proper session state initialization"""
+    # ✅ CRITICAL: Proper initialization pattern per Streamlit docs
     if 'llm_cache' not in st.session_state:
         st.session_state.llm_cache = {}
     
-    # Now we know llm_cache exists
+    # Check cache first
     if text in st.session_state.llm_cache:
         return st.session_state.llm_cache[text]
     
+    # Skip LLM for short snippets
     if not client or len(text) < 50:
         return text[:300] + "..." if text else "No summary available."
     
     try:
+        # ✅ CORRECT MODEL ID - Llama 4 Scout
         chat_completion = client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "Summarize this article in one short paragraph. Focus on the main topic. Remove author names, publication dates, and promotional text. Keep it neutral and factual."},
+                {"role": "system", "content": "Summarize this article in ONE short paragraph (max 80 words). Focus on key facts only. Remove author names, dates, and promotional text. Be neutral."},
                 {"role": "user", "content": text[:3000]}
             ],
-            model="meta-llama/llama-4-scout-17b-16e-instruct",  # ✅ CORRECT MODEL ID
+            model="meta-llama/llama-4-scout-17b-16e-instruct",
             temperature=0.3,
-            max_tokens=150,
+            max_tokens=120,  # Reduced from 150
             top_p=1.0
         )
         summary = chat_completion.choices[0].message.content.strip()
+        
+        # ✅ CRITICAL: Truncate to prevent memory bloat
+        summary = summary[:200] + "..." if len(summary) > 200 else summary
+        
+        # Add to cache
         st.session_state.llm_cache[text] = summary
         return summary
     except Exception as e:
         st.warning(f"LLM failed: {e}")
-        return text[:300] + "..."
+        # ✅ Fallback: Return short snippet with truncation
+        return text[:200] + "..." if text else "No summary available."
 
 def enrich_articles_with_scraping(df, progress_callback=None):
     if SKIP_WEB_SCRAPING:
