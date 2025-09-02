@@ -148,19 +148,24 @@ def summarize_with_llama(text):
     if 'llm_cache' not in st.session_state:
         st.session_state.llm_cache = {}
     
+    # This check is now redundant because of the fix below, but harmless
     if text in st.session_state.llm_cache:
         return st.session_state.llm_cache[text]
     
-    # Check for placeholder text from scraper
-    if not client or len(text) < 150 or "No meaningful content" in text:
+    # ✅ FIX: Check if `text` is None or empty FIRST to prevent the TypeError.
+    # This single line handles all cases of failed scrapes or insufficient content.
+    if not text or not client or len(text) < 150 or "No meaningful content" in text:
         return "Summary not available (insufficient content)."
     
+    # Check cache again after validating text
+    if text in st.session_state.llm_cache:
+        return st.session_state.llm_cache[text]
+
     try:
-        # ✅ FIX: Use a valid and available model
         chat_completion = client.chat.completions.create(
             messages=[
                 {"role": "system", "content": "You are a news summarizer. Summarize the key points of this article in one concise paragraph (around 50-80 words). Be factual and neutral. Do not include opinions or promotional language."},
-                {"role": "user", "content": text} # Already truncated to 3000 chars by scraper
+                {"role": "user", "content": text}
             ],
             model="llama3-8b-8192",
             temperature=0.3,
@@ -173,9 +178,8 @@ def summarize_with_llama(text):
         return summary
     except Exception as e:
         st.warning(f"LLM summarization failed: {e}")
-        # Return a clearer fallback message
         return f"LLM Error. Snippet: {text[:200]}..."
-
+        
 def enrich_articles_with_scraping(df, progress_callback=None):
     if SKIP_WEB_SCRAPING:
         df['text'] = "Scraping disabled for development."
