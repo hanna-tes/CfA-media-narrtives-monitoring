@@ -6,6 +6,7 @@ import altair as alt
 from datetime import datetime, date, timedelta
 from data_loader import load_and_transform_data, get_news_categories, get_media_names_for_filter
 import time  # Make sure this is imported
+from groq import Groq
 
 TAG_DISPLAY_THRESHOLD = 0.15
 ARTICLES_PER_PAGE = 5
