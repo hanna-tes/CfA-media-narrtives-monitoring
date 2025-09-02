@@ -260,7 +260,7 @@ def enrich_articles_with_scraping(df, progress_callback=None):
     df['urlToImage'].fillna('https://placehold.co/400x200/cccccc/000000?text=No+Image', inplace=True)
 
     return df
-
+    
 def load_and_transform_data(progress_callback=None):
     df = load_raw_data()
     if df.empty:
