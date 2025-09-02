@@ -7,10 +7,15 @@ import time
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
+from groq import Groq
 
 # --- Configuration ---
 LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250829083045.csv"
 SKIP_WEB_SCRAPING = False  # Set to True during development
+GROQ_API_KEY = st.secrets["GROQ_API_KEY"]  # Add your key in Streamlit Cloud or .streamlit/secrets.toml
+
+# --- Initialize Groq Client ---
+client = Groq(api_key=GROQ_API_KEY) if "GROQ_API_KEY" in st.secrets else None
 
 # --- Keyword Labels ---
 KEYWORD_LABELS = {
@@ -25,11 +30,9 @@ KEYWORD_LABELS = {
 }
 
 def get_news_categories():
-    """Returns supported news categories."""
     return ["business", "politics", "general"]
 
 def assign_labels_and_scores(df_articles):
-    """Assign content-based labels and scores."""
     labels = list(KEYWORD_LABELS.keys()) + ["Factual", "Neutral"]
     for label in labels:
         df_articles[label] = 0.0
@@ -55,7 +58,6 @@ def assign_labels_and_scores(df_articles):
     return df_articles
 
 def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
-    """Fetch article snippet or image."""
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
     }
@@ -72,11 +74,11 @@ def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
                 for container in containers:
                     p = container.find('p')
                     if p and p.get_text(strip=True):
-                        return p.get_text(strip=True)[:500] + "..."
+                        return p.get_text(strip=True)[:1000]  # Longer for LLM
                 p = soup.find('p')
                 if p and p.get_text(strip=True):
-                    return p.get_text(strip=True)[:500] + "..."
-                return "No summary available."
+                    return p.get_text(strip=True)[:1000]
+                return "No content available."
 
             elif fetch_type == "image":
                 og = soup.find('meta', property='og:image')
@@ -94,9 +96,15 @@ def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
             time.sleep(delay * (i + 1))
     return None
 
+def is_valid_image_url(url):
+    if not url:
+        return False
+    url_lower = url.lower()
+    blocked = ['logo', 'ad.', 'banner', 'sponsor', 'doubleclick', 'gif', 'svg', 'png?size=', 'taboola', 'youtube']
+    return all(word not in url_lower for word in blocked)
+
 @st.cache_data(ttl=3600)
 def load_raw_data():
-    """Load and clean raw data."""
     try:
         df = pd.read_csv(LOCAL_DATA_FILE)
         df.rename(columns={
@@ -125,8 +133,36 @@ def get_media_names_cached():
 def get_media_names_for_filter():
     return get_media_names_cached()
 
+def summarize_with_llama(text):
+    """Summarize text using Groq + Llama 4 Scout"""
+    if not client:
+        return text[:300] + "..."  # Fallback if no API
+
+    try:
+        chat_completion = client.chat.completions.create(
+            messages=[
+                {
+                    "role": "system",
+                    "content": "Summarize this article in one short paragraph. Focus on the main topic. Remove author names, publication dates, and promotional text. Keep it neutral and factual."
+                },
+                {
+                    "role": "user",
+                    "content": text[:3000]  # Stay under token limit
+                }
+            ],
+            model="llama-3.1-70b-versatile",  # Groq supports this alias for Llama 3.1
+            # Note: As of now, Groq supports Llama 3.1, not Llama 4 yet
+            # But you can switch when available
+            temperature=0.3,
+            max_tokens=150,
+            top_p=1.0
+        )
+        return chat_completion.choices[0].message.content.strip()
+    except Exception as e:
+        st.warning(f"LLM failed: {e}")
+        return text[:300] + "..."
+
 def enrich_articles_with_scraping(df):
-    """Enrich articles with snippets and images."""
     if SKIP_WEB_SCRAPING:
         df['text'] = df['headline'].apply(lambda x: f"{str(x)[:250]}..." if pd.notna(x) else "No summary available.")
         df['urlToImage'] = None
@@ -159,26 +195,36 @@ def enrich_articles_with_scraping(df):
         # Fetch snippet
         if url not in scraped_text:
             snippet = fetch_content_with_retry(url, "snippet")
-            scraped_text[url] = snippet or f"{df[df['url']==url]['headline'].iloc[0][:200]}..." \
-                                 if not df[df['url']==url].empty else "No summary available."
+            if snippet and len(snippet) > 50:
+                # ✅ Use LLM to summarize
+                summarized = summarize_with_llama(snippet)
+                scraped_text[url] = summarized
+            else:
+                scraped_text[url] = f"{row['headline']}: Summary not available."
 
         # Fetch image
         if url not in scraped_image:
             image = fetch_content_with_retry(url, "image")
 
-            # Fallback 1: Use media logo from domain
-            if not image:
+            # Fallback 1: Clearbit logo
+            if not image or not is_valid_image_url(image):
                 try:
                     parsed_url = urlparse(url)
-                    domain = parsed_url.netloc
-                    if domain.startswith('www.'):
-                        domain = domain[4:]
+                    domain = parsed_url.netloc.replace('www.', '', 1)
                     image = f"https://logo.clearbit.com/{domain}"
                 except Exception:
                     image = None
 
-            # Fallback 2: Placeholder
+            # Fallback 2: Favicon
             if not image:
+                try:
+                    parsed_url = urlparse(url)
+                    image = f"https://{parsed_url.netloc}/favicon.ico"
+                except Exception:
+                    image = None
+
+            # Fallback 3: Placeholder
+            if not image or not is_valid_image_url(image):
                 image = 'https://placehold.co/400x200/cccccc/000000?text=No+Image'
 
             scraped_image[url] = image
