@@ -7,6 +7,8 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urljoin
 import asyncio
 from playwright.async_api import async_playwright
+from groq import Groq
+
 
 try:
     GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
