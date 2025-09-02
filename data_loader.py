@@ -4,8 +4,9 @@ import random
 import time
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse, urljoin # Added urljoin
-from groq import Groq
+from urllib.parse import urlparse, urljoin
+import asyncio
+from playwright.async_api import async_playwright
 
 try:
     GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
@@ -45,7 +46,7 @@ def assign_labels_and_scores(df_articles):
             score = sum(0.2 for keyword in keywords
                         if (f" {keyword} " in combined_text or
                             combined_text.startswith(f"{keyword} ") or
-                            combined_text.endswith(f" {keyword}")))
+                            combined_text.endswith(f" {keyword}"))))
             if score > 0:
                 df_articles.at[index, label] = min(score, 1.0)
                 if score >= 0.3:
@@ -58,72 +59,75 @@ def assign_labels_and_scores(df_articles):
         df_articles[label] = df_articles[label].clip(upper=1.0)
     return df_articles
 
-# COMPLETE REVISED FUNCTION
-def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
-    }
-    for i in range(retries):
-        try:
-            response = requests.get(url, headers=headers, timeout=15)
-            response.raise_for_status()
-            soup = BeautifulSoup(response.text, 'html.parser')
+# === NEW PLAYWRIGHT-BASED FUNCTION ===
+CSS_SELECTORS = [
+    'article',
+    'div.article-body',
+    'div.content-body',
+    'div.story-content',
+    'div.main-content',
+    'div.post_content',
+    'div.jl_content',
+    'div.story.btm20',
+    'div.container-fluid',
+    'div.article_content',
+    'div.col-tn-12',
+    'div.col-sm-8',
+    'div.column',
+    'main',
+    'div.mycase4_reader',
+    'div.content-inner'
+]
 
-            # Find the main content container of the article
-            content_container = soup.find('article') or \
-                                soup.find('div', class_=[
-                                    'article-body',
-                                    'content-body',
-                                    'story-content',
-                                    'main-content',
-                                    'post_content',
-                                    'jl_content',
-                                    'story',  # Corrected
-                                    'btm20',  # Corrected
-                                    'container-fluid',
-                                    'article_content',
-                                    'col-tn-12',
-                                    'col-sm-8',
-                                    'column',
-                                    'main',
-                                    'mycase4_reader',
-                                    'content-inner'
-                                ]) or \
-                                soup.find('main')
+async def fetch_content_with_playwright(url, fetch_type="snippet"):
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch()
+            page = await browser.new_page()
 
-            if fetch_type == "snippet":
-                if content_container:
-                    paragraphs = content_container.find_all('p')
-                    full_text = ' '.join([p.get_text(strip=True) for p in paragraphs])
-                    if len(full_text) > 50:
-                        return full_text[:3000] # Give ample text for LLM
-                return "No meaningful content found to summarize."
+            # Navigate to the URL and wait for the network to be idle
+            await page.goto(url, wait_until='networkidle')
 
-            elif fetch_type == "image":
-                og_image = soup.find('meta', property='og:image')
-                if og_image and og_image.get('content'):
-                    return og_image['content']
-                
-                twitter_image = soup.find('meta', property='twitter:image')
-                if twitter_image and twitter_image.get('content'):
-                    return twitter_image['content']
-
-                if content_container:
-                    img = content_container.find('img', src=True)
-                    if img:
-                        return urljoin(url, img.get('src'))
-
-                img = soup.find('img', src=True)
-                if img:
-                    return urljoin(url, img.get('src'))
-                    
-                return None
-
-        except requests.exceptions.RequestException:
-            time.sleep(delay * (i + 1))
+            # Find the first element that matches any of the selectors
+            main_content = None
+            for selector in CSS_SELECTORS:
+                main_content_elements = await page.locator(selector).all()
+                if main_content_elements:
+                    main_content = main_content_elements[0]
+                    break
             
-    return None
-    
+            if main_content:
+                if fetch_type == "snippet":
+                    full_text = await main_content.inner_text()
+                    if len(full_text.strip()) > 50:
+                        await browser.close()
+                        return full_text[:3000] # Give ample text for LLM
+                
+                elif fetch_type == "image":
+                    # Try to find Open Graph or Twitter image first
+                    og_image_url = await page.locator('meta[property="og:image"]').get_attribute('content')
+                    if og_image_url:
+                        await browser.close()
+                        return og_image_url
+                    
+                    twitter_image_url = await page.locator('meta[property="twitter:image"]').get_attribute('content')
+                    if twitter_image_url:
+                        await browser.close()
+                        return twitter_image_url
+                        
+                    # Find first image within the main content container
+                    img_src = await main_content.locator('img').get_attribute('src')
+                    if img_src:
+                        await browser.close()
+                        return urljoin(url, img_src)
+            
+            await browser.close()
+            return "No meaningful content found to summarize." if fetch_type == "snippet" else None
+
+    except Exception as e:
+        print(f"Playwright failed to fetch content from {url}: {e}")
+        return "No meaningful content found to summarize." if fetch_type == "snippet" else None
+
 def is_valid_image_url(url):
     if not url:
         return False
@@ -165,16 +169,9 @@ def summarize_with_llama(text):
     if 'llm_cache' not in st.session_state:
         st.session_state.llm_cache = {}
     
-    # This check is now redundant because of the fix below, but harmless
-    if text in st.session_state.llm_cache:
-        return st.session_state.llm_cache[text]
-    
-    # ✅ FIX: Check if `text` is None or empty FIRST to prevent the TypeError.
-    # This single line handles all cases of failed scrapes or insufficient content.
     if not text or not client or len(text) < 150 or "No meaningful content" in text:
         return "Summary not available (insufficient content)."
     
-    # Check cache again after validating text
     if text in st.session_state.llm_cache:
         return st.session_state.llm_cache[text]
 
@@ -226,15 +223,15 @@ def enrich_articles_with_scraping(df, progress_callback=None):
     processed = 0
 
     for url in urls_to_fetch:
-        # Fetch snippet and summarize
+        # Fetch snippet and summarize using the new async function
         if url not in scraped_text:
-            content = fetch_content_with_retry(url, "snippet")
+            content = asyncio.run(fetch_content_with_playwright(url, "snippet"))
             summary = summarize_with_llama(content)
             scraped_text[url] = summary
 
-        # Fetch image
+        # Fetch image using the new async function
         if url not in scraped_image:
-            image_url = fetch_content_with_retry(url, "image")
+            image_url = asyncio.run(fetch_content_with_playwright(url, "image"))
             
             if not is_valid_image_url(image_url):
                 try:
