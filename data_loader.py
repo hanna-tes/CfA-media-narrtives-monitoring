@@ -58,7 +58,7 @@ def assign_labels_and_scores(df_articles):
         df_articles[label] = df_articles[label].clip(upper=1.0)
     return df_articles
 
-# ✅ COMPLETE REVISED FUNCTION
+# COMPLETE REVISED FUNCTION
 def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
@@ -71,7 +71,24 @@ def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
 
             # Find the main content container of the article
             content_container = soup.find('article') or \
-                                soup.find('div', class_=['article-body', 'content-body', 'story-content', 'main-content']) or \
+                                soup.find('div', class_=[
+                                    'article-body',
+                                    'content-body',
+                                    'story-content',
+                                    'main-content',
+                                    'post_content',
+                                    'jl_content',
+                                    'story',  # Corrected
+                                    'btm20',  # Corrected
+                                    'container-fluid',
+                                    'article_content',
+                                    'col-tn-12',
+                                    'col-sm-8',
+                                    'column',
+                                    'main',
+                                    'mycase4_reader',
+                                    'content-inner'
+                                ]) or \
                                 soup.find('main')
 
             if fetch_type == "snippet":
@@ -106,7 +123,7 @@ def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
             time.sleep(delay * (i + 1))
             
     return None
-
+    
 def is_valid_image_url(url):
     if not url:
         return False
