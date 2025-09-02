@@ -1,4 +1,4 @@
-# data_loader.py
+# data_loader.py (updated with progress_callback)
 
 import streamlit as st
 import pandas as pd
@@ -12,10 +12,18 @@ from groq import Groq
 # --- Configuration ---
 LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250829083045.csv"
 SKIP_WEB_SCRAPING = False  # Set to True during development
-GROQ_API_KEY = st.secrets["GROQ_API_KEY"]  # Add your key in Streamlit Cloud or .streamlit/secrets.toml
+
+# --- Initialize LLM Cache ---
+if 'llm_cache' not in st.session_state:
+    st.session_state.llm_cache = {}
 
 # --- Initialize Groq Client ---
-client = Groq(api_key=GROQ_API_KEY) if "GROQ_API_KEY" in st.secrets else None
+try:
+    GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+    client = Groq(api_key=GROQ_API_KEY)
+except:
+    client = None
+    st.warning("⚠️ Groq API key not found. Running without LLM summarization.")
 
 # --- Keyword Labels ---
 KEYWORD_LABELS = {
@@ -100,7 +108,7 @@ def is_valid_image_url(url):
     if not url:
         return False
     url_lower = url.lower()
-    blocked = ['logo', 'ad.', 'banner', 'sponsor', 'doubleclick', 'gif', 'svg', 'png?size=', 'taboola', 'youtube']
+    blocked = ['logo', 'ad.', 'banner', 'sponsor', 'doubleclick', 'gif', 'svg', 'png?size=', 'taboola', 'youtube', 'favicon', '.ico']
     return all(word not in url_lower for word in blocked)
 
 @st.cache_data(ttl=3600)
@@ -134,35 +142,34 @@ def get_media_names_for_filter():
     return get_media_names_cached()
 
 def summarize_with_llama(text):
-    """Summarize text using Groq + Llama 4 Scout"""
-    if not client:
-        return text[:300] + "..."  # Fallback if no API
-
+    """Cached LLM summarization"""
+    # ✅ Critical: Use cache to avoid repeated LLM calls
+    if text in st.session_state.llm_cache:
+        return st.session_state.llm_cache[text]
+    
+    if not client or len(text) < 50:
+        return text[:300] + "..." if text else "No summary available."
+    
     try:
+        # Only summarize once per unique text
         chat_completion = client.chat.completions.create(
             messages=[
-                {
-                    "role": "system",
-                    "content": "Summarize this article in one short paragraph. Focus on the main topic. Remove author names, publication dates, and promotional text. Keep it neutral and factual."
-                },
-                {
-                    "role": "user",
-                    "content": text[:3000]  # Stay under token limit
-                }
+                {"role": "system", "content": "Summarize this article in one short paragraph. Focus on the main topic. Remove author names, publication dates, and promotional text. Keep it neutral and factual."},
+                {"role": "user", "content": text[:3000]}  # Stay under token limit
             ],
-            model="llama-3.1-70b-versatile",  # Groq supports this alias for Llama 3.1
-            # Note: As of now, Groq supports Llama 3.1, not Llama 4 yet
-            # But you can switch when available
+            model="llama-3.1-70b-versatile",
             temperature=0.3,
             max_tokens=150,
             top_p=1.0
         )
-        return chat_completion.choices[0].message.content.strip()
+        summary = chat_completion.choices[0].message.content.strip()
+        st.session_state.llm_cache[text] = summary
+        return summary
     except Exception as e:
         st.warning(f"LLM failed: {e}")
         return text[:300] + "..."
 
-def enrich_articles_with_scraping(df):
+def enrich_articles_with_scraping(df, progress_callback=None):
     if SKIP_WEB_SCRAPING:
         df['text'] = df['headline'].apply(lambda x: f"{str(x)[:250]}..." if pd.notna(x) else "No summary available.")
         df['urlToImage'] = None
@@ -191,16 +198,21 @@ def enrich_articles_with_scraping(df):
         df['urlToImage'] = df['url'].map(scraped_image).fillna(df['urlToImage'])
         return df
 
+    # Track progress for real-time feedback
+    total = len(urls_to_fetch)
+    processed = 0
+
     for url in urls_to_fetch:
         # Fetch snippet
         if url not in scraped_text:
             snippet = fetch_content_with_retry(url, "snippet")
-            if snippet and len(snippet) > 50:
-                # ✅ Use LLM to summarize
+            if snippet and len(snippet) > 150:  # Only summarize substantial content
+                # ✅ Critical: Use cached LLM results
                 summarized = summarize_with_llama(snippet)
                 scraped_text[url] = summarized
             else:
-                scraped_text[url] = f"{row['headline']}: Summary not available."
+                # Skip LLM for short snippets
+                scraped_text[url] = snippet[:300] + "..." if snippet else "No summary available."
 
         # Fetch image
         if url not in scraped_image:
@@ -229,6 +241,11 @@ def enrich_articles_with_scraping(df):
 
             scraped_image[url] = image
 
+        # Update progress (for main.py to track)
+        processed += 1
+        if progress_callback:
+            progress_callback(processed / total, f"Processed {processed}/{total} articles...")
+
     st.session_state.scraped_data['url_to_text'] = scraped_text
     st.session_state.scraped_data['url_to_image'] = scraped_image
 
@@ -237,11 +254,11 @@ def enrich_articles_with_scraping(df):
 
     return df
 
-def load_and_transform_data():
+def load_and_transform_data(progress_callback=None):
     df = load_raw_data()
     if df.empty:
         return pd.DataFrame()
-    df = enrich_articles_with_scraping(df.copy())
+    df = enrich_articles_with_scraping(df.copy(), progress_callback=progress_callback)
     df = assign_labels_and_scores(df)
     all_labels = ["Factual", "Neutral", "Pro-Russia", "Anti-West", "Anti-France", "Sensationalist", "Anti-US", "Opinion"]
     final_cols = ['headline', 'text', 'url', 'urlToImage', 'date_published', 'source_name'] + all_labels
