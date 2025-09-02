@@ -46,7 +46,7 @@ def assign_labels_and_scores(df_articles):
             score = sum(0.2 for keyword in keywords
                         if (f" {keyword} " in combined_text or
                             combined_text.startswith(f"{keyword} ") or
-                            combined_text.endswith(f" {keyword}"))))
+                            combined_text.endswith(f" {keyword}")))
             if score > 0:
                 df_articles.at[index, label] = min(score, 1.0)
                 if score >= 0.3:
