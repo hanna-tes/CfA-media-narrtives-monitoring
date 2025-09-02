@@ -1,16 +1,13 @@
-# data_loader.py
-
 import streamlit as st
 import pandas as pd
 import random
 import time
 import requests
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin # Added urljoin
 from groq import Groq
 
 try:
-    # Get API key from Streamlit secrets (the correct way)
     GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
     client = Groq(api_key=GROQ_API_KEY)
 except Exception as e:
@@ -19,7 +16,7 @@ except Exception as e:
 
 # --- Configuration ---
 LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250829083045.csv"
-SKIP_WEB_SCRAPING = False  # Set to True during development
+SKIP_WEB_SCRAPING = False
 
 # --- Keyword Labels ---
 KEYWORD_LABELS = {
@@ -61,6 +58,7 @@ def assign_labels_and_scores(df_articles):
         df_articles[label] = df_articles[label].clip(upper=1.0)
     return df_articles
 
+# ✅ COMPLETE REVISED FUNCTION
 def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
     headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
@@ -71,33 +69,42 @@ def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
 
+            # Find the main content container of the article
+            content_container = soup.find('article') or \
+                                soup.find('div', class_=['article-body', 'content-body', 'story-content', 'main-content']) or \
+                                soup.find('main')
+
             if fetch_type == "snippet":
-                containers = soup.find_all(['article', 'div'], class_=[
-                    'article-body', 'content-body', 'story-content', 'main-content'
-                ])
-                for container in containers:
-                    p = container.find('p')
-                    if p and p.get_text(strip=True):
-                        return p.get_text(strip=True)[:1000]  # Longer for LLM
-                p = soup.find('p')
-                if p and p.get_text(strip=True):
-                    return p.get_text(strip=True)[:1000]
-                return "No content available."
+                if content_container:
+                    paragraphs = content_container.find_all('p')
+                    full_text = ' '.join([p.get_text(strip=True) for p in paragraphs])
+                    if len(full_text) > 50:
+                        return full_text[:3000] # Give ample text for LLM
+                return "No meaningful content found to summarize."
 
             elif fetch_type == "image":
-                og = soup.find('meta', property='og:image')
-                if og and og.get('content'):
-                    return og['content']
-                tw = soup.find('meta', property='twitter:image')
-                if tw and tw.get('content'):
-                    return tw['content']
+                og_image = soup.find('meta', property='og:image')
+                if og_image and og_image.get('content'):
+                    return og_image['content']
+                
+                twitter_image = soup.find('meta', property='twitter:image')
+                if twitter_image and twitter_image.get('content'):
+                    return twitter_image['content']
+
+                if content_container:
+                    img = content_container.find('img', src=True)
+                    if img:
+                        return urljoin(url, img.get('src'))
+
                 img = soup.find('img', src=True)
                 if img:
-                    return img['src'] or img.get('data-src')
+                    return urljoin(url, img.get('src'))
+                    
                 return None
 
-        except Exception:
+        except requests.exceptions.RequestException:
             time.sleep(delay * (i + 1))
+            
     return None
 
 def is_valid_image_url(url):
@@ -138,47 +145,40 @@ def get_media_names_for_filter():
     return get_media_names_cached()
 
 def summarize_with_llama(text):
-    """Cached LLM summarization with proper session state initialization"""
-    # ✅ CRITICAL: Proper initialization pattern per Streamlit docs
     if 'llm_cache' not in st.session_state:
         st.session_state.llm_cache = {}
     
-    # Check cache first
     if text in st.session_state.llm_cache:
         return st.session_state.llm_cache[text]
     
-    # Skip LLM for short snippets
-    if not client or len(text) < 50:
-        return text[:300] + "..." if text else "No summary available."
+    # Check for placeholder text from scraper
+    if not client or len(text) < 150 or "No meaningful content" in text:
+        return "Summary not available (insufficient content)."
     
     try:
-        # ✅ CORRECT MODEL ID - Llama 4 Scout
+        # ✅ FIX: Use a valid and available model
         chat_completion = client.chat.completions.create(
             messages=[
-                {"role": "system", "content": "Summarize this article in ONE short paragraph (max 80 words). Focus on key facts only. Remove author names, dates, and promotional text. Be neutral."},
-                {"role": "user", "content": text[:3000]}
+                {"role": "system", "content": "You are a news summarizer. Summarize the key points of this article in one concise paragraph (around 50-80 words). Be factual and neutral. Do not include opinions or promotional language."},
+                {"role": "user", "content": text} # Already truncated to 3000 chars by scraper
             ],
-            model="meta-llama/llama-4-scout-17b-16e-instruct",
+            model="llama3-8b-8192",
             temperature=0.3,
-            max_tokens=120,  # Reduced from 150
+            max_tokens=120,
             top_p=1.0
         )
         summary = chat_completion.choices[0].message.content.strip()
         
-        # ✅ CRITICAL: Truncate to prevent memory bloat
-        summary = summary[:200] + "..." if len(summary) > 200 else summary
-        
-        # Add to cache
         st.session_state.llm_cache[text] = summary
         return summary
     except Exception as e:
-        st.warning(f"LLM failed: {e}")
-        # ✅ Fallback: Return short snippet with truncation
-        return text[:200] + "..." if text else "No summary available."
+        st.warning(f"LLM summarization failed: {e}")
+        # Return a clearer fallback message
+        return f"LLM Error. Snippet: {text[:200]}..."
 
 def enrich_articles_with_scraping(df, progress_callback=None):
     if SKIP_WEB_SCRAPING:
-        df['text'] = df['headline'].apply(lambda x: f"{str(x)[:250]}..." if pd.notna(x) else "No summary available.")
+        df['text'] = "Scraping disabled for development."
         df['urlToImage'] = None
         return df
 
@@ -191,64 +191,39 @@ def enrich_articles_with_scraping(df, progress_callback=None):
     scraped_text = st.session_state.scraped_data['url_to_text']
     scraped_image = st.session_state.scraped_data['url_to_image']
 
-    urls_to_fetch = []
-    for _, row in df.iterrows():
-        url = row['url']
-        needs_text = pd.isna(row['text']) or not str(row['text']).strip()
-        needs_image = pd.isna(row['urlToImage']) or not str(row['urlToImage']).strip()
+    urls_to_fetch = df[
+        (df['text'].isnull() | (df['text'] == '')) & (df['url'].notnull()) |
+        (df['urlToImage'].isnull() | (df['urlToImage'] == '')) & (df['url'].notnull())
+    ]['url'].unique()
 
-        if (needs_text and url not in scraped_text) or (needs_image and url not in scraped_image):
-            urls_to_fetch.append(url)
-
-    if not urls_to_fetch:
+    if len(urls_to_fetch) == 0:
         df['text'] = df['url'].map(scraped_text).fillna(df['text'])
         df['urlToImage'] = df['url'].map(scraped_image).fillna(df['urlToImage'])
         return df
 
-    # Track progress for real-time feedback
     total = len(urls_to_fetch)
     processed = 0
 
     for url in urls_to_fetch:
-        # Fetch snippet
+        # Fetch snippet and summarize
         if url not in scraped_text:
-            snippet = fetch_content_with_retry(url, "snippet")
-            if snippet and len(snippet) > 150:  # Only summarize substantial content
-                # ✅ Critical: Use cached LLM results
-                summarized = summarize_with_llama(snippet)
-                scraped_text[url] = summarized
-            else:
-                # Skip LLM for short snippets
-                scraped_text[url] = snippet[:300] + "..." if snippet else "No summary available."
+            content = fetch_content_with_retry(url, "snippet")
+            summary = summarize_with_llama(content)
+            scraped_text[url] = summary
 
         # Fetch image
         if url not in scraped_image:
-            image = fetch_content_with_retry(url, "image")
-
-            # Fallback 1: Clearbit logo
-            if not image or not is_valid_image_url(image):
+            image_url = fetch_content_with_retry(url, "image")
+            
+            if not is_valid_image_url(image_url):
                 try:
-                    parsed_url = urlparse(url)
-                    domain = parsed_url.netloc.replace('www.', '', 1)
-                    image = f"https://logo.clearbit.com/{domain}"
+                    domain = urlparse(url).netloc.replace('www.', '', 1)
+                    image_url = f"https://logo.clearbit.com/{domain}"
                 except Exception:
-                    image = None
+                    image_url = 'https://placehold.co/400x200/cccccc/000000?text=No+Image'
+            
+            scraped_image[url] = image_url
 
-            # Fallback 2: Favicon
-            if not image:
-                try:
-                    parsed_url = urlparse(url)
-                    image = f"https://{parsed_url.netloc}/favicon.ico"
-                except Exception:
-                    image = None
-
-            # Fallback 3: Placeholder
-            if not image or not is_valid_image_url(image):
-                image = 'https://placehold.co/400x200/cccccc/000000?text=No+Image'
-
-            scraped_image[url] = image
-
-        # Update progress (for main.py to track)
         processed += 1
         if progress_callback:
             progress_callback(processed / total, f"Processed {processed}/{total} articles...")
@@ -258,6 +233,10 @@ def enrich_articles_with_scraping(df, progress_callback=None):
 
     df['text'] = df['url'].map(scraped_text).fillna(df['text'])
     df['urlToImage'] = df['url'].map(scraped_image).fillna(df['urlToImage'])
+    
+    # Final cleanup for any remaining empty values
+    df['text'].fillna("Summary not available.", inplace=True)
+    df['urlToImage'].fillna('https://placehold.co/400x200/cccccc/000000?text=No+Image', inplace=True)
 
     return df
 
