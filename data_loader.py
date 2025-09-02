@@ -167,7 +167,7 @@ def summarize_with_llama(text):
                 {"role": "system", "content": "You are a news summarizer. Summarize the key points of this article in one concise paragraph (around 50-80 words). Be factual and neutral. Do not include opinions or promotional language."},
                 {"role": "user", "content": text}
             ],
-            model="llama3-8b-8192",
+            model="llama-3.1-8b-instant",
             temperature=0.3,
             max_tokens=120,
             top_p=1.0
