@@ -5,6 +5,7 @@ import pandas as pd
 import altair as alt
 from datetime import datetime, date, timedelta
 from data_loader import load_and_transform_data, get_news_categories, get_media_names_for_filter
+import time  # Make sure this is imported
 
 TAG_DISPLAY_THRESHOLD = 0.15
 ARTICLES_PER_PAGE = 5
@@ -66,22 +67,28 @@ def main():
     if 'current_page' not in st.session_state:
         st.session_state.current_page = 1
 
-    # --- Load Data with Progress Bar ---
-    with st.spinner("Loading articles..."):
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-
-        # Simulate progress
-        for i in range(100):
-            time.sleep(0.01)
-            progress_bar.progress((i + 1) / 100)
-
-        # Load data
-        all_articles_df = load_and_transform_data()
-
-        # Clear progress bar and status text
-        progress_bar.empty()
-        status_text.empty()
+    # --- Load Data with REAL Progress Tracking ---
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    
+    # Start timing
+    start_time = time.time()
+    
+    # Function to update progress from data_loader
+    def update_progress(progress, message=None):
+        progress_bar.progress(min(progress, 1.0))
+        if message:
+            status_text.text(message)
+    
+    # Load data WITH progress tracking
+    all_articles_df = load_and_transform_data(progress_callback=update_progress)
+    
+    # Calculate load time
+    load_time = time.time() - start_time
+    
+    # Clear progress when done
+    progress_bar.empty()
+    status_text.empty()
 
     if all_articles_df.empty:
         st.warning("⚠️ No articles loaded.")
@@ -151,6 +158,13 @@ def main():
                 st.altair_chart(chart1, use_container_width=True, theme=None)
         else:
             st.info("No data to display charts.")
+        
+        # Add performance info and cache clearing
+        st.divider()
+        st.caption(f"Loaded in {load_time:.1f}s")
+        if st.button("🔄 Clear LLM Cache"):
+            st.session_state.llm_cache = {}
+            st.rerun()
 
     # --- Main Content Area ---
     st.title("🌍 Vulnerability Index")
@@ -217,5 +231,4 @@ def main():
 
 
 if __name__ == "__main__":
-    import time
     main()
