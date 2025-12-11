@@ -97,8 +97,10 @@ def load_and_transform_data():
         df['strategic_intent'] = "Economic Dependency"
     
     # Add actor & country
-    df['inferred_actor'] = df['text'].apply(extract_actor)
-    df['target_country'] = df['text'].apply(extract_country)
+    if 'inferred_actor' not in df.columns:
+        df['inferred_actor'] = df['text'].apply(extract_actor)
+    if 'target_country' not in df.columns:
+        df['target_country'] = df['text'].apply(extract_country)
     
     # Ensure required columns
     for col in ['url', 'headline', 'text', 'source_name']:
