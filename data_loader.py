@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
 # --- Configuration ---
-LOCAL_DATA_FILE = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/refs/heads/main/south-africa-or-nigeria-or-all-story-urls-20250829083045.csv"
+LOCAL_DATA_FILE = DATASET_URL = "https://github.com/your-username/your-repo/releases/download/v1.0/merged_dataset.csv"
 
 # --- Actor & Country Lists ---
 ACTORS = ["China", "France", "UnitedStates", "Russia", "Rwanda", "Saudi", "Turkey", "UAE", "Israel", "Iran", "NonState"]
