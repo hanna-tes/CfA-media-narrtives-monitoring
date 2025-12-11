@@ -72,7 +72,7 @@ def load_ml_artifacts():
         return None, None, None, None
 
 # --- Core Data Loading ---
-@st.cache_data(ttl=7200)
+@st.cache_data(ttl=86400)
 def load_and_transform_data():
     # Load raw data
     try:
