@@ -145,7 +145,7 @@ with st.sidebar:
     selected_country = st.selectbox("Target Country", ["All"] + get_countries())
     selected_actor = st.selectbox("Foreign Actor", ["All"] + get_actors())
     
-    # Intent list now sourced directly from the model script
+    # Intent list now sourced directly from the model script keys
     intents = ["All"] + sorted(INTENT_FACTORS.keys())
     selected_intent = st.selectbox("Strategic Intent", intents)
     
@@ -161,6 +161,7 @@ if selected_country != "All":
 if selected_actor != "All":
     filtered = filtered[filtered['inferred_actor'] == selected_actor]
 if selected_intent != "All":
+    # Assumes the data's 'strategic_intent' column matches the INTENT_FACTORS keys
     filtered = filtered[filtered['strategic_intent'] == selected_intent]
 if selected_tone != "All":
     filtered = filtered[filtered['tone'] == selected_tone]
@@ -168,28 +169,33 @@ if selected_tone != "All":
 # Influence Index Logic FIX (Use actual CA calculated above)
 @st.cache_data
 def get_influence_score(actor, country, intent):
-    if not actor or not country or not CA:
-        return 0.0
+    if actor == "All" or country == "All" or not CA:
+        return 0.0 # Return 0 if filters are too broad or CA is empty
         
     # Normalize input case using .title() to match the TitleCase keys in contextual_all_intents_v2.py
-    actor_normalized = actor.title() if actor != 'All' else actor
-    country_normalized = country.title() if country != 'All' else country
+    actor_normalized = actor.title()
+    country_normalized = country.title()
     
     # If a specific intent is selected, use that score
     if intent != "All":
-        # CA[intent][actor][country]
-        return CA.get(intent, {}).get(actor_normalized, {}).get(country_normalized, 0.0)
+        # CA[intent][actor][country] - Safely retrieve the score, default to 0.0
+        score = CA.get(intent, {}).get(actor_normalized, {}).get(country_normalized, 0.0)
+        return score
     
     # If "All" intents are selected, calculate the average score across all intents
-    scores = [CA[i].get(actor_normalized, {}).get(country_normalized, 0) for i in CA]
-    
+    scores = []
+    for i in CA:
+         score = CA[i].get(actor_normalized, {}).get(country_normalized, 0.0)
+         if score is not None:
+             scores.append(score)
+
     # Calculate average score
-    return sum(scores) / len(CA) if scores and len(scores) > 0 else 0.0
+    return sum(scores) / len(scores) if scores else 0.0
 
 
 current_influence_score = 0.0
+# The influence score is only calculated when specific Actor AND Country are selected.
 if selected_country != "All" and selected_actor != "All":
-    # Pass the selected intent to the function
     current_influence_score = get_influence_score(selected_actor, selected_country, selected_intent)
     
 # --- 1. KPI Metrics ---
@@ -209,12 +215,25 @@ influence_delta_str = f"{influence_delta:+.2f}"
 
 # Tone Score (Assuming tone mapping: Positive: 1, Neutral: 0, Negative: -1)
 if 'tone' in filtered.columns:
-    tone_mapping = {'Positive': 1, 'Neutral': 0, 'Negative': -1}
+    # --- CRITICAL FIX: Update Tone Mapping to use provided categories ---
+    # Based on general sentiment analysis principles, Factual is Neutral (0),
+    # while Sensationalist, Cynical, and Alarmist imply increasing levels of negative sentiment.
+    tone_mapping = {
+        'Factual': 0.0,
+        'Sensationalist': -0.3, # Moderately Negative
+        'Cynical': -0.8,         # Highly Negative
+        'Alarmist': -1.0,        # Critically Negative
+        # Add 'Positive' or 'Neutral' if they exist in the dataset but were missed
+        'Positive': 1.0,
+        'Neutral': 0.0
+    }
     # Clean and map tone scores
     filtered['tone_clean'] = filtered['tone'].astype(str).str.title().str.strip()
     filtered['tone_numeric'] = filtered['tone_clean'].map(tone_mapping).fillna(0)
+    
+    # Ensure all non-mapped values (e.g., NaN or unexpected strings) default to 0.0
     current_tone_score = filtered['tone_numeric'].mean() if not filtered.empty else 0.0
-    previous_tone_score = 0.1
+    previous_tone_score = 0.1 # Placeholder value for previous score
     tone_delta = current_tone_score - previous_tone_score
     tone_delta_str = f"{tone_delta:+.2f}"
 else:
@@ -235,6 +254,7 @@ with col2:
     st.metric(
         label="Average Tone Score (Sentiment)",
         value=f"{current_tone_score:.2f}",
+        # Tone delta color should be 'inverse' because a high negative score (e.g., -0.8) should show a red arrow (inverse)
         delta=tone_delta_str,
         delta_color="inverse" 
     )
@@ -243,15 +263,17 @@ with col3:
     st.metric(
         label="Contextual Influence Index",
         value=f"{current_influence_score:.2f}",
+        # Influence delta color should be 'inverse' because higher score means higher risk
         delta=influence_delta_str,
         delta_color="inverse"
     )
 
 # Alert if Influence Index is high (e.g., > 0.6)
-if current_influence_score > 0.6 and current_influence_score < 0.8:
-    st.warning(f"⚠️ **Moderate Vulnerability Alert:** The Contextual Influence Index for {selected_actor} in {selected_country} is elevated ({current_influence_score:.2f}).")
-elif current_influence_score >= 0.8:
-    st.error(f"🚨 **High Vulnerability Warning:** The Contextual Influence Index for {selected_actor} in {selected_country} is critically high ({current_influence_score:.2f}).")
+if selected_actor != "All" and selected_country != "All":
+    if current_influence_score > 0.6 and current_influence_score < 0.8:
+        st.warning(f"⚠️ **Moderate Vulnerability Alert:** The Contextual Influence Index for {selected_actor} in {selected_country} is elevated ({current_influence_score:.2f}).")
+    elif current_influence_score >= 0.8:
+        st.error(f"🚨 **High Vulnerability Warning:** The Contextual Influence Index for {selected_actor} in {selected_country} is critically high ({current_influence_score:.2f}).")
 
 
 st.markdown("---")
