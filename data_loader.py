@@ -4,11 +4,9 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urljoin
-from functools import lru_cache
 import time
 import random
 
-# --- LLM Setup (optional) ---
 client = None
 try:
     from groq import Groq
@@ -17,7 +15,6 @@ try:
 except Exception:
     client = None
 
-# --- Keyword Labels ---
 KEYWORD_LABELS = {
     "Pro-Russia": ["russia", "kremlin", "putin", "russian forces", "moscow", "russian influence", "russia partnership"],
     "Anti-West": ["western sanctions", "western interference", "nato", "eu policy", "western powers", "western interests", "western hypocrisy"],
@@ -35,13 +32,10 @@ def assign_labels_and_scores(df_articles):
         df_articles[label] = 0.0
 
     for idx, row in df_articles.iterrows():
-        headline = str(row.get('headline', '') or '')
-        body = str(row.get('article_text', '') or '')
-        combined_text = (headline + " " + body).lower()
-
+        text = str(row.get('article_text', '')).lower()
         found_strong = False
         for label, keywords in KEYWORD_LABELS.items():
-            score = sum(0.2 for kw in keywords if f" {kw} " in f" {combined_text} ")
+            score = sum(0.2 for kw in keywords if f" {kw} " in f" {text} ")
             if score > 0:
                 df_articles.at[idx, label] = min(score, 1.0)
                 if score >= 0.3:
@@ -55,9 +49,7 @@ def assign_labels_and_scores(df_articles):
     return df_articles
 
 def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36'
-    }
+    headers = {'User-Agent': 'Mozilla/5.0'}
     for i in range(retries):
         try:
             response = requests.get(url, headers=headers, timeout=15)
@@ -65,37 +57,29 @@ def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
             soup = BeautifulSoup(response.text, 'html.parser')
 
             content_container = soup.find('article') or \
-                soup.find('div', class_=[
-                    'article-body', 'content-body', 'story-content', 'main-content',
-                    'post_content', 'jl_content', 'story', 'btm20', 'container-fluid',
-                    'article_content', 'col-tn-12', 'col-sm-8', 'column', 'main',
-                    'mycase4_reader', 'content-inner'
-                ]) or soup.find('main')
+                soup.find('div', class_=['article-body', 'content-body', 'story-content', 'main-content']) or \
+                soup.find('main')
 
             if fetch_type == "snippet":
                 if content_container:
-                    paragraphs = content_container.find_all('p')
-                    full_text = ' '.join([p.get_text(strip=True) for p in paragraphs])
+                    paras = content_container.find_all('p')
+                    full_text = ' '.join(p.get_text(strip=True) for p in paras)
                     if len(full_text) > 50:
                         return full_text[:3000]
-                return "No meaningful content found to summarize."
+                return "No meaningful content found."
 
             elif fetch_type == "image":
-                og_image = soup.find('meta', property='og:image')
-                if og_image and og_image.get('content'):
-                    return og_image['content']
-                twitter_image = soup.find('meta', property='twitter:image')
-                if twitter_image and twitter_image.get('content'):
-                    return twitter_image['content']
+                og = soup.find('meta', property='og:image')
+                if og and og.get('content'):
+                    return og['content']
                 if content_container:
                     img = content_container.find('img', src=True)
                     if img:
-                        return urljoin(url, img.get('src'))
+                        return urljoin(url, img['src'])
                 img = soup.find('img', src=True)
                 if img:
-                    return urljoin(url, img.get('src'))
+                    return urljoin(url, img['src'])
                 return None
-
         except Exception:
             time.sleep(delay * (i + 1))
     return None
@@ -110,8 +94,10 @@ def is_valid_image_url(url):
 @st.cache_data(ttl=86400)
 def load_raw_data():
     try:
-        df = pd.read_csv("Merged_dataset_sample.csv")
-        required_cols = ['URL', 'headline', 'posting_time', 'media_outlet', 'target_country', 'inferred_actor', 'tone', 'strategic_intent']
+        df = pd.read_csv("merged_dataset.csv")
+        # Your dataset uses these columns — no 'headline'
+        required_cols = ['article_text', 'posting_time', 'media_outlet', 'inferred_actor',
+                         'strategic_intent', 'sector', 'tone', 'target_country', 'URL']
         for col in required_cols:
             if col not in df.columns:
                 df[col] = None
@@ -123,23 +109,18 @@ def load_raw_data():
 
 def summarize_with_llama(text):
     if not text or not client or len(text) < 150 or "No meaningful content" in text:
-        return "Summary not available (insufficient content)."
-
+        return "Summary not available."
     if 'llm_cache' not in st.session_state:
         st.session_state.llm_cache = {}
     if text in st.session_state.llm_cache:
         return st.session_state.llm_cache[text]
-
     try:
         chat_completion = client.chat.completions.create(
-            messages=[
-                {"role": "system", "content": "You are a news summarizer. Summarize the key points of this article in one concise paragraph (around 50-80 words). Be factual and neutral. Do not include opinions or promotional language."},
-                {"role": "user", "content": text}
-            ],
+            messages=[{"role": "system", "content": "Summarize in 1 neutral paragraph (50–80 words)."},
+                      {"role": "user", "content": text}],
             model="llama-3.1-8b-instant",
             temperature=0.3,
-            max_tokens=120,
-            top_p=1.0
+            max_tokens=120
         )
         summary = chat_completion.choices[0].message.content.strip()
         st.session_state.llm_cache[text] = summary
@@ -147,7 +128,6 @@ def summarize_with_llama(text):
     except Exception:
         return "LLM summarization failed."
 
-# ✅ This function is NOT cached — handles live scraping
 def enrich_with_scraping_and_llm(df, progress_callback=None):
     if 'scraped_data' not in st.session_state:
         st.session_state.scraped_data = {'url_to_text': {}, 'url_to_image': {}}
@@ -173,44 +153,40 @@ def enrich_with_scraping_and_llm(df, progress_callback=None):
             scraped_text[url] = summary
 
         if url not in scraped_image:
-            image_url = fetch_content_with_retry(url, "image")
-            if not is_valid_image_url(image_url):
+            img_url = fetch_content_with_retry(url, "image")
+            if not is_valid_image_url(img_url):
                 try:
-                    domain = urlparse(url).netloc.replace('www.', '', 1)
-                    image_url = f"https://logo.clearbit.com/{domain}"
-                except Exception:
-                    image_url = 'https://placehold.co/400x200/cccccc/000000?text=No+Image'
-            scraped_image[url] = image_url
+                    domain = urlparse(url).netloc.replace('www.', '')
+                    img_url = f"https://logo.clearbit.com/{domain}"
+                except:
+                    img_url = 'https://placehold.co/400x200/cccccc/000000?text=No+Image'
+            scraped_image[url] = img_url
 
         if progress_callback:
-            progress_callback((i + 1) / total, f"Processed {i+1}/{total}...")
+            progress_callback((i + 1) / total, f"Enriching {i+1}/{total}...")
 
     st.session_state.scraped_data['url_to_text'] = scraped_text
     st.session_state.scraped_data['url_to_image'] = scraped_image
 
     df['article_text'] = df['URL'].map(scraped_text).fillna(df['article_text'])
     df['urlToImage'] = df['URL'].map(scraped_image).fillna(df['urlToImage'])
-    df['article_text'].fillna("Summary not available.", inplace=True)
-    df['urlToImage'].fillna('https://placehold.co/400x200/cccccc/000000?text=No+Image', inplace=True)
+
+    # ✅ FIX: Replace inplace=True
+    df['article_text'] = df['article_text'].fillna("Summary not available.")
+    df['urlToImage'] = df['urlToImage'].fillna('https://placehold.co/400x200/cccccc/000000?text=No+Image')
+
     return df
 
-# ✅ CACHED FUNCTION — NO PARAMETERS, NO SIDE EFFECTS
 @st.cache_data(ttl=86400)
 def load_and_transform_data():
-    """Load and label data — no scraping, no callbacks."""
     df = load_raw_data()
     if df.empty:
         return df
-
-    if 'article_text' not in df.columns:
-        df['article_text'] = None
     if 'urlToImage' not in df.columns:
         df['urlToImage'] = None
-
     df = assign_labels_and_scores(df)
     return df
 
-# --- FILTER HELPERS (MUST BE PRESENT) ---
 @st.cache_data(ttl=86400)
 def get_media_names():
     df = load_raw_data()
