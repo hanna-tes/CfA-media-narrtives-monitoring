@@ -2,34 +2,28 @@
 import streamlit as st
 import pandas as pd
 from data_loader import load_and_transform_data, get_media_names, get_countries, get_actors
-from contextual_all_intents_v2 import compute_CA_and_final, actors, countries
+from contextual_all_intents_v2 import CA  # Your influence scores
 
-# ---------------- PAGE CONFIG ----------------
-st.set_page_config(page_title="Vulnerability Index Tool", layout="wide")
+# ----------------------------------------------------------
+#  PAGE CONFIG & CFA BRANDING
+# ----------------------------------------------------------
+st.set_page_config(
+    page_title="Vulnerability Index Tool",
+    layout="wide"
+)
 
-# ---------------- CFA BACKGROUND ----------------
+# Add CFA logo as subtle watermark
 def add_cfa_background():
     st.markdown(
         """
         <style>
         .stApp {
-            background-image: url('CFA_Logo.png');
+            background-image: url('https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/main/CFA_Logo.png');
             background-size: 30%;
             background-position: center;
             background-repeat: no-repeat;
             background-attachment: fixed;
-        }
-        .stApp::before {
-            content: "";
-            position: fixed;
-            top: 0; left: 0;
-            width: 100%; height: 100%;
-            background-image: inherit;
-            background-size: inherit;
-            background-position: inherit;
-            background-repeat: inherit;
             opacity: 0.06;
-            z-index: -1;
         }
         </style>
         """,
@@ -38,74 +32,85 @@ def add_cfa_background():
 
 add_cfa_background()
 
-# ---------------- LOAD DATA ----------------
+# ----------------------------------------------------------
+#  LOAD DATA
+# ----------------------------------------------------------
 df = load_and_transform_data()
 
-# ---------------- SIDEBAR FILTERS ----------------
+# ----------------------------------------------------------
+#  SIDEBAR FILTERS
+# ----------------------------------------------------------
 with st.sidebar:
     st.title("🔍 Filters")
+
     selected_media = st.selectbox("Media Outlet", get_media_names())
     selected_country = st.selectbox("Target Country", get_countries())
     selected_actor = st.selectbox("Foreign Actor", get_actors())
+
     intents = ["All"] + sorted(df['strategic_intent'].dropna().unique())
     selected_intent = st.selectbox("Strategic Intent", intents)
+
     tones = ["All"] + sorted(df['tone'].dropna().unique())
     selected_tone = st.selectbox("Tone", tones)
 
-# ---------------- APPLY FILTERS ----------------
+# ----------------------------------------------------------
+#  APPLY FILTERS
+# ----------------------------------------------------------
 filtered = df.copy()
+
 if selected_media != "All":
     filtered = filtered[filtered['media_outlet'] == selected_media]
+
 if selected_country != "All":
     filtered = filtered[filtered['target_country'] == selected_country]
+
 if selected_actor != "All":
     filtered = filtered[filtered['inferred_actor'] == selected_actor]
+
 if selected_intent != "All":
     filtered = filtered[filtered['strategic_intent'] == selected_intent]
+
 if selected_tone != "All":
     filtered = filtered[filtered['tone'] == selected_tone]
 
-# ---------------- PAGE TITLE ----------------
+# ----------------------------------------------------------
+#  PAGE TITLE & INFLUENCE INDEX
+# ----------------------------------------------------------
 st.title("🌍 Vulnerability Index Tool")
-st.write(f"### Showing **{len(filtered)}** of **{len(df)}** articles")
 
-# ---------------- CACHE AND COMPUTE CA ----------------
-@st.cache_data
-def get_CA():
-    """Compute Contextual Influence Index only once."""
-    avg_base_example = {a:{c:0.40 for c in countries} for a in actors}
-    CA, _ = compute_CA_and_final(avg_base_example)
-    return CA
-
-CA = get_CA()
-
-# ---------------- INFLUENCE METRIC ----------------
+# Contextual Influence Index (from your contextual_all_intents_v2.py)
 @st.cache_data
 def get_influence_score(actor, country):
     scores = [CA[i].get(actor, {}).get(country, 0) for i in CA]
     return sum(scores)/len(scores) if scores else 0
 
 if selected_country != "All" and selected_actor != "All":
-    try:
-        avg_score = get_influence_score(selected_actor, selected_country)
-        st.metric(
-            "Contextual Influence Index",
-            f"{avg_score:.2f}",
-            help="Composite score (0.0–1.0) based on debt, military, resources, and strategic alignment."
-        )
-    except Exception:
-        st.error("Influence index unavailable")
+    avg_score = get_influence_score(selected_actor, selected_country)
+    st.metric(
+        "Contextual Influence Index",
+        f"{avg_score:.2f}",
+        help="Composite score (0.0–1.0) based on debt, military, resources, and strategic alignment."
+    )
+else:
+    st.info("Select a Foreign Actor and Target Country to see the Influence Index.")
 
-# ---------------- PAGINATION ----------------
-articles_per_page = 10
+st.write(f"### Showing **{len(filtered)}** of **{len(df)}** articles")
+
+# ----------------------------------------------------------
+#  PAGINATION SETUP
+# ----------------------------------------------------------
+articles_per_page = 6
 total_pages = (len(filtered) - 1) // articles_per_page + 1
+
 if "page" not in st.session_state:
     st.session_state.page = 0
 
-col1, col2, col3 = st.columns([1,2,1])
+col1, col2, col3 = st.columns([1, 2, 1])
+
 with col1:
     if st.button("⬅ Previous") and st.session_state.page > 0:
         st.session_state.page -= 1
+
 with col3:
     if st.button("Next ➡") and st.session_state.page < total_pages - 1:
         st.session_state.page += 1
@@ -114,18 +119,24 @@ start_idx = st.session_state.page * articles_per_page
 end_idx = start_idx + articles_per_page
 page_articles = filtered.iloc[start_idx:end_idx]
 
-# ---------------- ARTICLE CARDS ----------------
+# ----------------------------------------------------------
+#  ARTICLE CARDS WITH EXPANDER
+# ----------------------------------------------------------
 for _, row in page_articles.iterrows():
     with st.expander(f"{row['article_text'][:100]}..."):
         st.caption(
             f"**Target Country**: {row['target_country']} | "
             f"**Foreign Actor**: {row['inferred_actor']}"
         )
-        st.write(row['article_text'] if pd.notna(row['article_text']) else "No summary available.")
-        st.markdown(
-            f"**Tone**: `{row['tone']}` | **Strategic Intent**: `{row['strategic_intent']}`"
+
+        st.write(
+            row['article_text'] if pd.notna(row['article_text']) else "No summary available."
         )
+
+        st.markdown(
+            f"**Tone**: `{row['tone']}` | "
+            f"**Strategic Intent**: `{row['strategic_intent']}`"
+        )
+
         if pd.notna(row.get('URL', None)):
             st.markdown(f"[🔗 Read full article]({row['URL']})")
-
-st.write(f"Page {st.session_state.page + 1} of {total_pages}")
