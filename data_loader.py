@@ -140,9 +140,19 @@ def summarize_with_llama(text):
         return "LLM summarization failed."
 
 def enrich_with_scraping_and_llm(df, progress_callback=None):
+    
+    # 🌟 FIX for KeyError: 'url_to_summary' 🌟
+    # Ensure the main dictionary and all sub-keys are initialized robustly
     if 'scraped_data' not in st.session_state:
-        st.session_state.scraped_data = {'url_to_text': {}, 'url_to_image': {}, 'url_to_summary': {}}
-
+        st.session_state.scraped_data = {}
+        
+    if 'url_to_text' not in st.session_state.scraped_data:
+        st.session_state.scraped_data['url_to_text'] = {}
+    if 'url_to_image' not in st.session_state.scraped_data:
+        st.session_state.scraped_data['url_to_image'] = {}
+    if 'url_to_summary' not in st.session_state.scraped_data:
+        st.session_state.scraped_data['url_to_summary'] = {}
+        
     scraped_content = st.session_state.scraped_data['url_to_text']
     scraped_image = st.session_state.scraped_data['url_to_image']
     scraped_summary = st.session_state.scraped_data['url_to_summary']
