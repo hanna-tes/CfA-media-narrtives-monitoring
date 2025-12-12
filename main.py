@@ -8,12 +8,12 @@ from data_loader import (
     get_countries,
     get_actors
 )
-from contextual_all_intents_v2 import CA
+# Assuming CA is available from this import
+from contextual_all_intents_v2 import CA 
 
 # --- NEW BACKGROUND AND LOGO ---
-# 1. New, slightly brighter background image
-NEW_BACKGROUND_URL = "https://images.unsplash.com/photo-1518770660439-4630ee79dee7?q=80&w=2070&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D" 
-# 2. A placeholder for a brighter logo
+NEW_BACKGROUND_URL = "https://media.istockphoto.com/id/1502033887/vector/beige-gray-grainy-gradient-background-poster-backdrop-noise-texture-webpage-header-wide.jpg?s=612x612&w=0&k=20&c=eGwiA8zZ4cobGeMz5QeRs5zKzlp1Rr-BcROwT4S22y0=" 
+# Using a clearly visible logo
 BRIGHT_LOGO_URL = "https://opportunities.codeforafrica.org/wp-content/uploads/sites/5/2023/12/CfA-Logo-White-Green.png" 
 
 
@@ -28,7 +28,7 @@ st.markdown(f"""
     background-attachment: fixed;
 }}
 /* Ensure main text elements use Streamlit's theme color for visibility */
-h1, h2, h3, h4, h5, h6, .css-1d3w5av, .stAlert p {{ 
+h1, h2, h3, h4, h5, h6, .css-1d3w5av, .stAlert p, .stMarkdown, .stMetric .css-1ndc21z, .stMetric .css-1ndc21z > div:first-child {{ 
     color: var(--text-color) !important; 
 }}
 
@@ -84,16 +84,12 @@ h1, h2, h3, h4, h5, h6, .css-1d3w5av, .stAlert p {{
     color: #60a5fa;
     text-decoration: underline;
 }}
-/* Pagination text styling for dark theme visibility */
-h5 {{
-    color: var(--text-color) !important;
-}}
 </style>
 """, unsafe_allow_html=True)
 
 st.set_page_config(page_title="Vulnerability Index Tool", layout="wide")
 
-# 🖼️ Logo in header (using the brighter logo)
+# 🖼️ Logo in header 
 st.image(BRIGHT_LOGO_URL, width=150)
 st.title("🌍 Vulnerability Index Tool")
 
@@ -111,7 +107,6 @@ with st.spinner("Enriching articles..."):
     def progress_callback(p, msg):
         progress_bar.progress(min(p, 1.0))
         status_text.text(msg)
-    # The enrichment function handles LLM fallback and image logo fallback
     df = enrich_with_scraping_and_llm(df_base, progress_callback=progress_callback)
 progress_bar.empty()
 status_text.empty()
@@ -141,11 +136,23 @@ if selected_intent != "All":
 if selected_tone != "All":
     filtered = filtered[filtered['tone'] == selected_tone]
 
-# Influence Index
+# Influence Index Logic Fix
 @st.cache_data
 def get_influence_score(actor, country):
-    scores = [CA[i].get(actor, {}).get(country, 0) for i in CA]
-    return sum(scores) / len(scores) if scores else 0
+    if not actor or not country or not CA:
+        return 0.0
+        
+    # FIX: Normalize input case using .title() to match the TitleCase keys in contextual_all_intents_v2.py
+    # This converts "united states" to "United States", which is a key in your data.
+    # We strip 'All' first just in case it somehow makes it through.
+    actor_normalized = actor.title() if actor != 'All' else actor
+    country_normalized = country.title() if country != 'All' else country
+    
+    # Calculate the sum of scores across all intents (i)
+    scores = [CA[i].get(actor_normalized, {}).get(country_normalized, 0) for i in CA]
+    
+    # Calculate average score
+    return sum(scores) / len(CA) if CA else 0.0
 
 if selected_country != "All" and selected_actor != "All":
     avg_score = get_influence_score(selected_actor, selected_country)
@@ -166,14 +173,12 @@ start_idx = st.session_state.page * articles_per_page
 end_idx = start_idx + articles_per_page
 page_articles = filtered.iloc[start_idx:end_idx]
 
-# Display Articles (no expander, styled card)
+# Display Articles 
 for _, row in page_articles.iterrows():
     
-    # article_text now holds the LLM summary or the robust sentence fallback
     article_text = str(row.get('article_text', 'No summary available.'))
     image_url = row.get('urlToImage', None)
 
-    # Use the first sentence of article_text for the headline
     headline = article_text.split('.')[0] + "." if article_text and article_text != 'No summary available.' else "No Headline Available"
     
     media = str(row.get('media_outlet', 'Unknown'))
@@ -190,7 +195,7 @@ for _, row in page_articles.iterrows():
         except:
             pass
 
-    # Image rendering logic (guaranteed to be article image, logo, or 'No+Image' placeholder URL)
+    # Image rendering logic
     display_image = image_url if image_url and isinstance(image_url, str) else 'https://placehold.co/400x200/cccccc/000000?text=No+Image'
 
     # 🎨 Render Card
