@@ -7,11 +7,17 @@ from data_loader import (
     get_countries,
     get_actors
 )
-from contextual_all_intents_v2 import CA  # Your influence scores
+
+# Import influence data (ensure contextual_all_intents_v2.py has NO syntax errors!)
+try:
+    from contextual_all_intents_v2 import CA
+except Exception as e:
+    st.error(f"Failed to import influence scores: {e}")
+    CA = {}
 
 st.set_page_config(page_title="Vulnerability Index Tool", layout="wide")
 
-# ---- Show loading progress during enrichment ----
+# ---- Load data with progress ----
 with st.spinner("Loading and enriching articles..."):
     progress_bar = st.progress(0)
     status_text = st.empty()
@@ -29,7 +35,7 @@ if df.empty:
     st.error("No data loaded. Please check merged_dataset.csv.")
     st.stop()
 
-# ---- SIDEBAR FILTERS ----
+# ---- Sidebar filters ----
 with st.sidebar:
     st.title("🔍 Filters")
     selected_media = st.selectbox("Media Outlet", get_media_names())
@@ -42,7 +48,7 @@ with st.sidebar:
     tones = ["All"] + sorted(df['tone'].dropna().unique())
     selected_tone = st.selectbox("Tone", tones)
 
-# ---- APPLY FILTERS ----
+# ---- Apply filters ----
 filtered = df.copy()
 if selected_media != "All":
     filtered = filtered[filtered['media_outlet'] == selected_media]
@@ -55,13 +61,19 @@ if selected_intent != "All":
 if selected_tone != "All":
     filtered = filtered[filtered['tone'] == selected_tone]
 
-# ---- INFLUENCE INDEX ----
+# ---- Influence Index ----
 st.title("🌍 Vulnerability Index Tool")
 
 @st.cache_data
 def get_influence_score(actor, country):
-    scores = [CA[i].get(actor, {}).get(country, 0) for i in CA]
-    return sum(scores) / len(scores) if scores else 0
+    if not isinstance(CA, dict):
+        return 0.0
+    scores = []
+    for dimension in CA.values():
+        if isinstance(dimension, dict):
+            country_score = dimension.get(actor, {}).get(country, 0)
+            scores.append(country_score)
+    return sum(scores) / len(scores) if scores else 0.0
 
 if selected_country != "All" and selected_actor != "All":
     avg_score = get_influence_score(selected_actor, selected_country)
@@ -75,7 +87,7 @@ else:
 
 st.write(f"### Showing **{len(filtered)}** of **{len(df)}** articles")
 
-# ---- PAGINATION ----
+# ---- Pagination ----
 articles_per_page = 6
 total_pages = max(1, (len(filtered) - 1) // articles_per_page + 1)
 
@@ -96,7 +108,7 @@ start_idx = st.session_state.page * articles_per_page
 end_idx = start_idx + articles_per_page
 page_articles = filtered.iloc[start_idx:end_idx]
 
-# ---- ARTICLE CARDS ----
+# ---- Article cards ----
 for _, row in page_articles.iterrows():
     image_url = row.get('urlToImage', None)
     headline = row.get('headline', 'No headline')
