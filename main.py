@@ -16,7 +16,7 @@ from contextual_all_intents_v2 import CA
 NEW_BACKGROUND_URL = "https://media.istockphoto.com/id/1502033887/vector/beige-gray-grainy-gradient-background-poster-backdrop-noise-texture-webpage-header-wide.jpg?s=612x612&w=0&k=20&c=eGwiA8zZ4cobGeMz5QeRs5zKzlp1Rr-BcROwT4S22y0=" 
 # FIX: Using the downloaded local file path for maximum stability.
 # !!! IMPORTANT: REPLACE THIS PATH WITH THE ACTUAL PATH TO YOUR LOGO FILE !!!
-LOCAL_LOGO_PATH = "./assets/CfA-Logo-White.png" 
+LOCAL_LOGO_PATH = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/main/CFA_Logo.png" 
 BRIGHT_LOGO_URL = LOCAL_LOGO_PATH
 
 
