@@ -18,7 +18,7 @@ def add_cfa_background():
         """
         <style>
         .stApp {
-            background-image: url('https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/main/CFA_Logo.png');
+            background-image: url('https://opportunities.codeforafrica.org/wp-content/uploads/sites/5/2015/11/1-Zq7KnTAeKjBf6eENRsacSQ.png'); 
             background-size: 30%;
             background-position: center;
             background-repeat: no-repeat;
@@ -31,7 +31,6 @@ def add_cfa_background():
     )
 
 add_cfa_background()
-
 # ----------------------------------------------------------
 #  LOAD DATA
 # ----------------------------------------------------------
