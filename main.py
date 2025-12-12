@@ -14,8 +14,7 @@ from contextual_all_intents_v2 import CA
 # --- NEW BACKGROUND AND LOGO ---
 NEW_BACKGROUND_URL = "https://media.istockphoto.com/id/1502033887/vector/beige-gray-grainy-gradient-background-poster-backdrop-noise-texture-webpage-header-wide.jpg?s=612x612&w=0&k=20&c=eGwiA8zZ4cobGeMz5QeRs5zKzlp1Rr-BcROwT4S22y0=" 
 # Using a clearly visible logo
-BRIGHT_LOGO_URL = "https://opportunities.codeforafrica.org/wp-content/uploads/sites/5/2023/12/CfA-Logo-White-Green.png" 
-
+BRIGHT_LOGO_URL = "https://upload.wikimedia.org/wikipedia/commons/0/07/Code_for_Africa_logo_white.png"
 
 # 🎨 Custom CSS for theme-aware dark cards
 st.markdown(f"""
