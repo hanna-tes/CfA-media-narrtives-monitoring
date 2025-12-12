@@ -7,16 +7,16 @@ from urllib.parse import urlparse, urljoin
 import time
 import random
 
-# --- LLM Setup (optional) ---
+# --- Optional LLM Support ---
 client = None
 try:
     from groq import Groq
     GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
     client = Groq(api_key=GROQ_API_KEY)
 except Exception:
-    pass  # client remains None → LLM disabled
+    client = None  # LLM summarization disabled
 
-# --- Keyword Labels for Disinformation Scoring ---
+# --- Disinformation Labels ---
 KEYWORD_LABELS = {
     "Pro-Russia": ["russia", "kremlin", "putin", "russian forces", "moscow", "russian influence", "russia partnership"],
     "Anti-West": ["western sanctions", "western interference", "nato", "eu policy", "western powers", "western interests", "western hypocrisy"],
@@ -114,7 +114,6 @@ def is_valid_image_url(url):
 def load_raw_data():
     try:
         df = pd.read_csv("merged_dataset.csv")
-        # Ensure expected columns exist
         expected_cols = [
             'URL', 'headline', 'posting_time', 'media_outlet',
             'target_country', 'inferred_actor', 'tone', 'strategic_intent'
@@ -150,7 +149,7 @@ def summarize_with_llama(text):
         summary = chat_completion.choices[0].message.content.strip()
         st.session_state.llm_cache[text] = summary
         return summary
-    except Exception as e:
+    except Exception:
         return "LLM summarization failed."
 
 def enrich_articles_with_scraping(df, progress_callback=None):
@@ -160,9 +159,8 @@ def enrich_articles_with_scraping(df, progress_callback=None):
     scraped_text = st.session_state.scraped_data['url_to_text']
     scraped_image = st.session_state.scraped_data['url_to_image']
 
-    # Identify rows needing enrichment
     needs_text = df['article_text'].isnull() | (df['article_text'] == '')
-    needs_image = ~df['urlToImage'].notna()  # includes NaN and None
+    needs_image = ~df['urlToImage'].notna()
     needs_any = (needs_text | needs_image) & df['URL'].notnull()
     urls_to_fetch = df[needs_any]['URL'].dropna().unique()
 
@@ -202,8 +200,9 @@ def enrich_articles_with_scraping(df, progress_callback=None):
 
     return df
 
+# ✅ FIXED: _progress_callback (underscore prevents caching error)
 @st.cache_data(ttl=86400)
-def load_and_transform_data(progress_callback=None):
+def load_and_transform_data(_progress_callback=None):
     df = load_raw_data()
     if df.empty:
         return df
@@ -213,12 +212,12 @@ def load_and_transform_data(progress_callback=None):
     if 'urlToImage' not in df.columns:
         df['urlToImage'] = None
 
-    df = enrich_articles_with_scraping(df.copy(), progress_callback)
+    df = enrich_articles_with_scraping(df.copy(), progress_callback=_progress_callback)
     df = assign_labels_and_scores(df)
 
     return df
 
-# ---- Filter helper functions ----
+# ---- Filter helpers (safe, cacheable) ----
 @st.cache_data(ttl=86400)
 def get_media_names():
     df = load_raw_data()
