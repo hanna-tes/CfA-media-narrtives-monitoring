@@ -110,7 +110,7 @@ def is_valid_image_url(url):
 @st.cache_data(ttl=86400)
 def load_raw_data():
     try:
-        df = pd.read_csv("merged_dataset.csv")
+        df = pd.read_csv("Merged_dataset_sample.csv")
         required_cols = ['URL', 'headline', 'posting_time', 'media_outlet', 'target_country', 'inferred_actor', 'tone', 'strategic_intent']
         for col in required_cols:
             if col not in df.columns:
