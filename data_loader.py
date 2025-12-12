@@ -1,10 +1,12 @@
-# data_loader.py
 import streamlit as st
 import pandas as pd
 
+# -------------------- LOAD & TRANSFORM DATA --------------------
 @st.cache_data(ttl=86400)
 def load_and_transform_data():
-    # Load your sample CSV (already in repo root)
+    """
+    Load CSV dataset, parse dates, limit to top 100 rows.
+    """
     df = pd.read_csv("Merged_dataset_sample.csv")
     
     # Ensure date parsing
@@ -13,10 +15,10 @@ def load_and_transform_data():
     # Keep top 100 articles (or all if < 100)
     df = df.head(100).reset_index(drop=True)
     
-    st.success(f"✅ Loaded {len(df)} sample articles!")
     return df
 
-# Filter helpers
+
+# -------------------- FILTER HELPERS --------------------
 @st.cache_data(ttl=86400)
 def get_media_names():
     df = load_and_transform_data()
