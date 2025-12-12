@@ -1,24 +1,22 @@
+# data_loader.py
 import streamlit as st
 import pandas as pd
 
-# -------------------- LOAD & TRANSFORM DATA --------------------
+# ---------------- LOAD AND TRANSFORM DATA ----------------
 @st.cache_data(ttl=86400)
 def load_and_transform_data():
-    """
-    Load CSV dataset, parse dates, limit to top 100 rows.
-    """
-    df = pd.read_csv("Merged_dataset_sample.csv")
-    
-    # Ensure date parsing
-    df['posting_time'] = pd.to_datetime(df['posting_time'], errors='coerce')
-    
-    # Keep top 100 articles (or all if < 100)
-    df = df.head(100).reset_index(drop=True)
-    
-    return df
+    """Load CSV and parse dates."""
+    try:
+        df = pd.read_csv("Merged_dataset_sample.csv")
+        df['posting_time'] = pd.to_datetime(df['posting_time'], errors='coerce')
+        df = df.head(100).reset_index(drop=True)  # keep first 100 rows
+        st.success(f"✅ Loaded {len(df)} sample articles!")
+        return df
+    except FileNotFoundError:
+        st.error("Merged_dataset_sample.csv not found in repo root!")
+        return pd.DataFrame()
 
-
-# -------------------- FILTER HELPERS --------------------
+# ---------------- FILTER HELPERS ----------------
 @st.cache_data(ttl=86400)
 def get_media_names():
     df = load_and_transform_data()
