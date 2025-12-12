@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import re
-import numpy as np # Needed for array operations in mock model
+import numpy as np 
 
 # --- MOCK PLACEHOLDERS FOR EXTERNAL FILES (MUST BE DEFINED FOR CODE TO RUN) ---
 
@@ -24,12 +24,10 @@ def mock_compute_gs():
 
 def mock_compute_R(g):
     # Mock R-factors (Narrative Amplification)
-    # R is typically a matrix of Intent x Actor x Factor, but here we mock a simplified matrix
     actors = ['China', 'Rwanda', 'Turkey', 'Russia']
     countries = list(g.keys())
     R_mock = {}
     
-    # Generate R-factors (randomly 0.1 to 0.9)
     for intent in INTENT_FACTORS:
         R_mock[intent] = {}
         for actor in actors:
@@ -49,17 +47,15 @@ def mock_compute_CAs(g, R):
             CA_mock[intent][actor] = {}
             for country, g_factors in g.items():
                 
-                # Simplified calculation: (Sum of (R * g * Intent_Weight)) / Max_Possible_Score
                 total_weighted_vulnerability = 0
                 max_possible_score = 0
-                r_val = R[intent][actor][country] # Mock R-factor for this combination
+                r_val = R[intent][actor][country]
                 
                 for factor, weight in factors.items():
                     g_val = g_factors.get(factor, 0)
                     total_weighted_vulnerability += (r_val * g_val * weight)
-                    max_possible_score += (1.0 * 1.0 * weight) # Max R * Max G * Weight
+                    max_possible_score += (1.0 * 1.0 * weight)
                 
-                # Normalize the score (0.0 to 1.0)
                 score = min(total_weighted_vulnerability / (max_possible_score if max_possible_score > 0 else 1.0), 1.0)
                 CA_mock[intent][actor][country] = score
     return CA_mock
@@ -67,17 +63,15 @@ def mock_compute_CAs(g, R):
 # 2. MOCK for data_loader.py components
 @st.cache_data
 def load_and_transform_data():
-    # Assuming the user's uploaded file is named exactly this
     try:
         df = pd.read_csv("Merged_dataset_sample.csv")
     except FileNotFoundError:
         st.error("Error: 'Merged_dataset_sample.csv' not found. Please ensure the file is in the correct location or uploaded.")
         return pd.DataFrame()
         
-    # Basic data cleaning/type conversion expected from data_loader
     df['posting_time'] = pd.to_datetime(df['posting_time'], errors='coerce')
     
-    # Ensure all required columns exist (for robustness)
+    # Ensure all columns required for filtering and display are present
     required_cols = ['media_outlet', 'inferred_actor', 'strategic_intent', 'tone', 'target_country', 'URL', 'article_text']
     for col in required_cols:
         if col not in df.columns:
@@ -86,18 +80,30 @@ def load_and_transform_data():
     return df.dropna(subset=['article_text'])
 
 
-# Mock enrichment: just passes the data through
 def enrich_with_scraping_and_llm(df_base, progress_callback):
-    # In a real app, this would scrape 'URL' and populate 'article_text'
-    # Since 'article_text' is already populated by the CSV, we just simulate progress
+    # Progress bar simulation
     for i in range(1, 101):
         progress_callback(i/100, f"Simulating LLM enrichment: {i}% complete")
-        if i % 25 == 0: # Simulate a time delay
-            pass # In a real app, you might use time.sleep(0.1)
+        if i % 25 == 0:
+            pass 
+            
+    df_out = df_base.copy()
+    
+    # --- PLACEHOLDER FOR YOUR EXTERNAL SCRAPING OUTPUT (urlToImage column) ---
+    # This mock function ensures the column exists so the rendering logic works.
+    # IN PRODUCTION, YOUR PIPELINE MUST POPULATE THIS COLUMN BASED ON THE URL.
+    GENERIC_IMAGE_PLACEHOLDER = "https://placehold.co/400x200/4ade80/000000?text=Image+Source+from+URL"
 
-    return df_base
+    # Initialize the expected column name
+    df_out['urlToImage'] = GENERIC_IMAGE_PLACEHOLDER 
+    
+    # Randomly set a few to None to test the 'No Image' fallback display logic
+    if len(df_out) > 5:
+        indices_to_set_none = df_out.index[::5]
+        df_out.loc[indices_to_set_none, 'urlToImage'] = None 
 
-# Mock data getter functions
+    return df_out
+
 def get_media_names(): return ['Rnanews', 'Rfi', 'A News', 'Yeni Şafak']
 def get_countries(): return ['Senegal', 'Ethiopia', 'Nigeria', 'DRC']
 def get_actors(): return ['Rwanda', 'France', 'Turkey', 'China', 'Russia']
@@ -105,11 +111,8 @@ def get_actors(): return ['Rwanda', 'France', 'Turkey', 'China', 'Russia']
 # --- END OF MOCK PLACEHOLDERS ---
 
 # --- RUN CONTEXTUAL INFLUENCE MODEL ---
-# 1. Compute the raw factor scores (g)
 g = mock_compute_gs()
-# 2. Compute the relative influence R-factors
 R = mock_compute_R(g)
-# 3. Compute the final Contextual Influence Index (CA) lookup table
 CA = mock_compute_CAs(g,R)
 # --- MODEL RUN COMPLETE ---
 
@@ -131,17 +134,17 @@ st.markdown(f"""
 }}
 /* Ensure main text elements use Streamlit's theme color for visibility */
 h1, h2, h3, h4, h5, h6, .stAlert p, .stMarkdown, .stPlotlyChart .modebar {{ 
-    color: #1a1a1a !important; /* Dark color for section headers and general text */
+    color: #1a1a1a !important; 
 }}
 
 /* FIX: Ensure Metric Labels (small text above score) are dark and readable */
 .stMetric label, .stMetric .css-1ndc21z > div:first-child {{
-    color: #444444 !important; /* Dark gray for metric labels */
+    color: #444444 !important; 
     font-weight: bold;
 }}
 /* Ensure Metric Values (the large score numbers) are clearly visible */
 .stMetric .css-1ndc21z > div:last-child > div:first-child {{
-    color: #1a1a1a !important; /* Very dark for main scores */
+    color: #1a1a1a !important; 
 }}
 /* General text components using default text color (important for sidebars/select boxes) */
 .css-1d3w5av, .stText, .stSelectbox label, .stNumberInput label {{
@@ -151,8 +154,8 @@ h1, h2, h3, h4, h5, h6, .stAlert p, .stMarkdown, .stPlotlyChart .modebar {{
 
 /* -------------------- CARD-SPECIFIC STYLES (Always Dark) -------------------- */
 .card {{
-    background: #1e1e1e; /* Dark card background */
-    color: #ffffff; /* White text inside dark card */
+    background: #1e1e1e; 
+    color: #ffffff; 
     border-radius: 12px;
     padding: 20px;
     margin: 15px 0;
@@ -223,13 +226,12 @@ with st.spinner("Enriching articles..."):
     def progress_callback(p, msg):
         progress_bar.progress(min(p, 1.0))
         status_text.text(msg)
-    # df is the DataFrame containing the full 'article_text'
+    # df now includes the 'urlToImage' column created by the mock (simulating your scraper)
     df = enrich_with_scraping_and_llm(df_base, progress_callback=progress_callback)
 progress_bar.empty()
 status_text.empty()
 
-# --- CRITICAL: Recommended Summary Preprocessing Step ---
-# Creates clean 'llm_summary' and 'display_headline' columns from the raw 'article_text'.
+# --- CRITICAL: Summary Preprocessing Step (Uses LLM or First Sentences) ---
 @st.cache_data
 def create_display_text(df_in):
     df_out = df_in.copy()
@@ -239,13 +241,11 @@ def create_display_text(df_in):
             return 'Summary extraction pending or failed.', 'Article Snippet (No Text)'
         
         # 1. Determine the Headline (first sentence)
-        # Regex to find the first sentence ending in . ? or !
         headline_match = re.search(r'[^.?!]*[.?!]', text)
         headline = headline_match.group(0).strip() if headline_match else 'Article Snippet'
         
         # 2. Determine the Summary (first 1-2 sentences)
         if headline_match:
-            # Check for a second sentence
             text_after_first = text[headline_match.end():]
             second_sentence_match = re.search(r'[^.?!]*[.?!]', text_after_first)
             
@@ -254,13 +254,10 @@ def create_display_text(df_in):
             else:
                 summary = headline
         else:
-            # Fallback for non-sentence structures
             summary = text[:200].strip() + '...'
             
         return summary, headline
 
-    # Apply the summary extraction
-    # Fill NA values with empty string before processing to avoid errors
     results = df_out['article_text'].fillna('').apply(lambda x: extract_summary_and_headline(x))
     df_out['llm_summary'] = [r[0] for r in results]
     df_out['display_headline'] = [r[1] for r in results]
@@ -272,16 +269,13 @@ df = create_display_text(df)
 # Sidebar filters
 with st.sidebar:
     st.title("🔍 Filters")
-    # Ensuring "All" is available for selections
     selected_media = st.selectbox("Media Outlet", ["All"] + get_media_names())
     selected_country = st.selectbox("Target Country", ["All"] + get_countries())
     selected_actor = st.selectbox("Foreign Actor", ["All"] + get_actors())
     
-    # Intent list now sourced directly from the model script keys
     intents = ["All"] + sorted(INTENT_FACTORS.keys())
     selected_intent = st.selectbox("Strategic Intent", intents)
     
-    # Safely get unique tones
     tones = ["All"] + sorted(df['tone'].dropna().unique())
     selected_tone = st.selectbox("Tone", tones)
 
@@ -294,19 +288,16 @@ if selected_country != "All":
 if selected_actor != "All":
     filtered = filtered[filtered['inferred_actor'] == selected_actor]
 if selected_intent != "All":
-    # Assumes the data's 'strategic_intent' column matches the INTENT_FACTORS keys
     filtered = filtered[filtered['strategic_intent'] == selected_intent]
 if selected_tone != "All":
     filtered = filtered[filtered['tone'] == selected_tone]
 
-# Influence Index Logic (Use actual CA calculated above)
+# Influence Index Logic (Baseline Structural Vulnerability Lookup)
 @st.cache_data
-def get_influence_score(actor, country, intent):
+def get_influence_baseline_score(actor, country, intent):
     if actor == "All" or country == "All" or not CA:
-        return 0.0 # Return 0 if filters are too broad or CA is empty
+        return 0.0 
         
-    # Normalize input case using .title() to match the TitleCase keys in contextual_all_intents_v2.py
-    # Handle known acronyms that .title() messes up (e.g., UAE -> Uae)
     if actor.upper() in ['UAE', 'DRC']:
         actor_normalized = actor.upper()
     else:
@@ -317,66 +308,64 @@ def get_influence_score(actor, country, intent):
     else:
         country_normalized = country.title()
     
-    # If a specific intent is selected, use that score
     if intent != "All":
-        # CA[intent][actor][country] - Safely retrieve the score, default to 0.0
         score = CA.get(intent, {}).get(actor_normalized, {}).get(country_normalized, 0.0)
         return score
     
-    # If "All" intents are selected, calculate the average score across all intents
     scores = []
     for i in CA:
          score = CA[i].get(actor_normalized, {}).get(country_normalized, 0.0)
          if score is not None:
              scores.append(score)
 
-    # Calculate average score
     return sum(scores) / len(scores) if scores else 0.0
 
 
-current_influence_score = 0.0
-# The influence score is only calculated when specific Actor AND Country are selected.
-if selected_country != "All" and selected_actor != "All":
-    current_influence_score = get_influence_score(selected_actor, selected_country, selected_intent)
-    
 # --- 1. KPI Metrics ---
-st.header("📊 Key Indicators")
+st.header("📊 Key Performance Indicators")
 
 # Calculate KPIs
 current_article_count = len(filtered)
-# --- Mock Data for Delta Calculation ---
 previous_article_count = len(df) * 0.95 
 article_delta = current_article_count - previous_article_count
 article_delta_str = f"{article_delta:,.0f}"
 
-# FIX: Mock previous influence score based on current score
-# Ensure previous score is close to current but varies slightly for visual delta
-previous_influence_score = current_influence_score * (0.95 + (0.1 * (np.random.rand() - 0.5))) if current_influence_score > 0.05 else 0.0
-influence_delta = current_influence_score - previous_influence_score
-influence_delta_str = f"{influence_delta:+.2f}"
-
-# Tone Score (Using agreed-upon mapping)
+# Tone Score calculation (required for dynamic CII)
 if 'tone' in filtered.columns:
     tone_mapping = {
-        'Factual': 0.0,
-        'Sensationalist': -0.3, 
-        'Cynical': -0.8,         
-        'Alarmist': -1.0,        
-        'Positive': 1.0,
-        'Neutral': 0.0
+        'Factual': 0.0, 'Sensationalist': -0.3, 'Cynical': -0.8, 'Alarmist': -1.0, 'Positive': 1.0, 'Neutral': 0.0
     }
-    # Clean and map tone scores
     filtered['tone_clean'] = filtered['tone'].astype(str).str.title().str.strip()
     filtered['tone_numeric'] = filtered['tone_clean'].map(tone_mapping).fillna(0)
     
-    # Ensure all non-mapped values (e.g., NaN or unexpected strings) default to 0.0
     current_tone_score = filtered['tone_numeric'].mean() if not filtered.empty else 0.0
-    previous_tone_score = 0.1 # Placeholder value for previous score
+    previous_tone_score = 0.1 
     tone_delta = current_tone_score - previous_tone_score
     tone_delta_str = f"{tone_delta:+.2f}"
 else:
     current_tone_score = 0.0
     tone_delta_str = "N/A"
+
+# --- CII DYNAMIC CALCULATION ---
+baseline_influence_score = get_influence_baseline_score(selected_actor, selected_country, selected_intent)
+final_influence_score = baseline_influence_score
+
+if baseline_influence_score > 0 and current_article_count > 0:
+    # 1. Volume Factor: Max articles = 100 for normalization (0.0 to 1.0)
+    volume_factor = min(1.0, current_article_count / 100)
+    
+    # 2. Tone Factor: Makes negative tone increase vulnerability score. 
+    tone_factor = 1.0 - (current_tone_score / 2.0)
+
+    # 3. Dynamic Adjustment: Blend the structural vulnerability with the current narrative activity.
+    dynamic_modulation_factor = (volume_factor * tone_factor) 
+    
+    final_influence_score = min(1.0, baseline_influence_score * dynamic_modulation_factor)
+
+# Recalculate Delta based on the final score
+previous_influence_score = final_influence_score * (0.95 + (0.1 * (np.random.rand() - 0.5))) if final_influence_score > 0.05 else 0.0
+influence_delta = final_influence_score - previous_influence_score
+influence_delta_str = f"{influence_delta:+.2f}"
 
 col1, col2, col3 = st.columns(3)
 
@@ -392,7 +381,6 @@ with col2:
     st.metric(
         label="Average Tone Score (Sentiment)",
         value=f"{current_tone_score:.2f}",
-        # Tone delta color should be 'inverse' because a high negative score (e.g., -0.8) should show a red arrow (inverse)
         delta=tone_delta_str,
         delta_color="inverse" 
     )
@@ -400,30 +388,27 @@ with col2:
 with col3:
     st.metric(
         label="Contextual Influence Index",
-        value=f"{current_influence_score:.2f}",
-        # Influence delta color should be 'inverse' because higher score means higher risk
+        value=f"{final_influence_score:.2f}",
         delta=influence_delta_str,
         delta_color="inverse"
     )
 
-# Alert if Influence Index is high (e.g., > 0.6)
+# Alert if Influence Index is high 
 if selected_actor != "All" and selected_country != "All":
-    if current_influence_score > 0.6 and current_influence_score < 0.8:
-        st.warning(f"⚠️ **Moderate Vulnerability Alert:** The Contextual Influence Index for **{selected_actor}** in **{selected_country}** is elevated ({current_influence_score:.2f}).")
-    elif current_influence_score >= 0.8:
-        st.error(f"🚨 **High Vulnerability Warning:** The Contextual Influence Index for **{selected_actor}** in **{selected_country}** is critically high ({current_influence_score:.2f}).")
-    elif current_influence_score == 0.00:
-        st.info("ℹ️ **CII Calculation Tip:** The Contextual Influence Index is currently 0.00, likely due to a case sensitivity mismatch (e.g., 'UAE' vs 'Uae') in the filter or model data. Ensure casing is consistent across the model and filters.")
+    if final_influence_score > 0.6 and final_influence_score < 0.8:
+        st.warning(f"⚠️ **Moderate Vulnerability Alert:** The Contextual Influence Index for **{selected_actor}** in **{selected_country}** is elevated ({final_influence_score:.2f}).")
+    elif final_influence_score >= 0.8:
+        st.error(f"🚨 **High Vulnerability Warning:** The Contextual Influence Index for **{selected_actor}** in **{selected_country}** is critically high ({final_influence_score:.2f}).")
 
 
-# --- NEW: Metric Explanation Section (Visual and non-boring) ---
+# --- Metric Explanation Section ---
 st.markdown("<br>", unsafe_allow_html=True)
 
 with st.expander("❓ Understanding the Dashboard Metrics (Click to Expand)", expanded=False):
     st.markdown("---")
     
     # 1. Average Tone Score
-    st.markdown("####  1. Average Tone Score (Sentiment)")
+    st.markdown("#### 💬 1. Average Tone Score (Sentiment)")
     st.markdown(
         """
         This score measures the overall **journalistic framing and emotional valence** of the filtered articles. 
@@ -432,26 +417,21 @@ with st.expander("❓ Understanding the Dashboard Metrics (Click to Expand)", ex
     )
 
     st.markdown("##### Score Mapping:")
-    # Using columns for a visually appealing score table/breakdown
     tone_col1, tone_col2, tone_col3, tone_col4 = st.columns(4)
     
     with tone_col1:
-        # Factual/Neutral is the baseline
         st.success("🔵 **0.0 (Factual/Neutral)**: Objective and Balanced")
     with tone_col2:
-        # Sensationalist is a lighter negative
         st.info("🟠 **-0.3 (Sensationalist)**: Moderately Negative (Exaggeration)")
     with tone_col3:
-        # Cynical is more severe negative
         st.warning("🔴 **-0.8 (Cynical)**: Highly Negative (Distrust)")
     with tone_col4:
-        # Alarmist is the most severe negative
         st.error("🚨 **-1.0 (Alarmist)**: Critically Negative (Fear/Crisis)")
     
     st.markdown("---")
     
     # 2. Contextual Influence Index
-    st.markdown("####  2. Contextual Influence Index (CII)")
+    st.markdown("#### 🧠 2. Contextual Influence Index (CII)")
     
     st.markdown(
         """
@@ -467,8 +447,8 @@ with st.expander("❓ Understanding the Dashboard Metrics (Click to Expand)", ex
     st.markdown("##### CII Components (The Risk Formula):")
     st.markdown(
         """
-        1.  **Structural Vulnerability (G-Factor):** **Why the country is weak.** These are objective, underlying risks (e.g., high debt, military reliance) that make the country susceptible to *specific* strategic intents.
-        2.  **Narrative Amplification (R-Factor):** **What the actor is doing.** This is the measure of how successfully the foreign actor's narratives (media volume, tone, intent match) are being broadcast and resonating in the media.
+        1.  **Structural Vulnerability (G-Factor):** **Why the country is weak.** (The static baseline component.)
+        2.  **Narrative Amplification (R-Factor):** **What the actor is doing.** (The dynamic component, calculated from article volume and tone.)
         
         A high CII means the actor's efforts are landing on highly vulnerable ground.
         """
@@ -494,15 +474,12 @@ st.header("📈 Article Volume Trend")
 
 if 'posting_time' in filtered.columns and not filtered.empty:
     
-    # Ensure 'posting_time' is datetime (re-do just in case filtering changed the type)
     filtered['posting_time'] = pd.to_datetime(filtered['posting_time'], errors='coerce')
     filtered.dropna(subset=['posting_time'], inplace=True)
     
-    # Aggregate article count by day
     time_series_data = filtered.resample('D', on='posting_time')['URL'].count().reset_index()
     time_series_data.columns = ['Date', 'Article Count']
     
-    # Create the interactive Plotly line chart 
     fig = px.line(
         time_series_data,
         x='Date',
@@ -512,14 +489,13 @@ if 'posting_time' in filtered.columns and not filtered.empty:
         template='plotly_dark' 
     )
     
-    # Customize layout for better appearance
     fig.update_traces(mode='lines+markers', marker_size=5)
     fig.update_layout(hovermode="x unified", title_x=0.5)
     
     st.plotly_chart(fig, use_container_width=True)
 else:
-    st.info("Insufficient time-series data to display a trend. Filter criteria may be too narrow or 'posting_time' data is missing/invalid.")
-    
+    st.markdown("<p style='text-align: center; color: #777;'>No time-series trend data available based on current filters.</p>", unsafe_allow_html=True)
+
 st.markdown("---")
 st.write(f"### Showing **{len(filtered)}** of **{len(df)}** articles")
 
@@ -538,10 +514,10 @@ page_articles = filtered.iloc[start_idx:end_idx]
 # Display Articles 
 for _, row in page_articles.iterrows():
     
-    # Use the pre-processed columns for display
     summary_display = str(row.get('llm_summary', 'Summary extraction failed.'))
     headline = str(row.get('display_headline', 'Article Snippet (No Headline)'))
     
+    # This is the line that reads the image URL from the column populated by your scraper
     image_url = str(row.get('urlToImage', None)) 
     media = str(row.get('media_outlet', 'Unknown'))
     target_country = str(row.get('target_country', 'N/A'))
@@ -549,7 +525,6 @@ for _, row in page_articles.iterrows():
     tone = str(row.get('tone', 'N/A'))
     intent = str(row.get('strategic_intent', 'N/A'))
     
-    # Format posting time
     posting_time = "Date Unknown"
     if pd.notna(row.get('posting_time')):
         try:
