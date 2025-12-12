@@ -63,15 +63,15 @@ def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
             if fetch_type == "snippet":
                 if content_container:
                     paras = content_container.find_all('p')
-                    full_text = ' '.join(p.get_text(strip=True) for p in paras)
+                    full_text = ' '.join([p.get_text(strip=True) for p in paras])
                     if len(full_text) > 50:
                         return full_text[:3000]
                 return "No meaningful content found."
 
             elif fetch_type == "image":
-                og = soup.find('meta', property='og:image')
-                if og and og.get('content'):
-                    return og['content']
+                og_image = soup.find('meta', property='og:image')
+                if og_image and og_image.get('content'):
+                    return og_image['content']
                 if content_container:
                     img = content_container.find('img', src=True)
                     if img:
@@ -80,6 +80,7 @@ def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
                 if img:
                     return urljoin(url, img['src'])
                 return None
+
         except Exception:
             time.sleep(delay * (i + 1))
     return None
@@ -94,14 +95,19 @@ def is_valid_image_url(url):
 @st.cache_data(ttl=86400)
 def load_raw_data():
     try:
-        df = pd.read_csv("Merged_dataset_sample.csv")
-        # Your dataset uses these columns — no 'headline'
-        required_cols = ['article_text', 'posting_time', 'media_outlet', 'inferred_actor',
-                         'strategic_intent', 'sector', 'tone', 'target_country', 'URL']
+        df = pd.read_csv("merged_dataset.csv")
+        required_cols = [
+            'URL', 'article_text', 'posting_time', 'media_outlet',
+            'target_country', 'inferred_actor', 'tone', 'strategic_intent'
+        ]
         for col in required_cols:
             if col not in df.columns:
                 df[col] = None
-        df['posting_time'] = pd.to_datetime(df['posting_time'], errors='coerce')
+        # ✅ FIX: Parse posting_time with multiple formats
+        df['posting_time'] = (
+            pd.to_datetime(df['posting_time'], format="%Y-%m-%d %H:%M:%S", errors='coerce')
+            .fillna(pd.to_datetime(df['posting_time'], format="%d/%m/%Y %H:%M", errors='coerce'))
+        )
         return df
     except Exception as e:
         st.error(f"Failed to load merged_dataset.csv: {e}")
@@ -116,8 +122,10 @@ def summarize_with_llama(text):
         return st.session_state.llm_cache[text]
     try:
         chat_completion = client.chat.completions.create(
-            messages=[{"role": "system", "content": "Summarize in 1 neutral paragraph (50–80 words)."},
-                      {"role": "user", "content": text}],
+            messages=[
+                {"role": "system", "content": "Summarize key points in one concise paragraph (50–80 words). Be factual and neutral."},
+                {"role": "user", "content": text}
+            ],
             model="llama-3.1-8b-instant",
             temperature=0.3,
             max_tokens=120
@@ -158,7 +166,7 @@ def enrich_with_scraping_and_llm(df, progress_callback=None):
                 try:
                     domain = urlparse(url).netloc.replace('www.', '')
                     img_url = f"https://logo.clearbit.com/{domain}"
-                except:
+                except Exception:
                     img_url = 'https://placehold.co/400x200/cccccc/000000?text=No+Image'
             scraped_image[url] = img_url
 
@@ -171,10 +179,11 @@ def enrich_with_scraping_and_llm(df, progress_callback=None):
     df['article_text'] = df['URL'].map(scraped_text).fillna(df['article_text'])
     df['urlToImage'] = df['URL'].map(scraped_image).fillna(df['urlToImage'])
 
-    # ✅ FIX: Replace inplace=True
-    df['article_text'] = df['article_text'].fillna("Summary not available.")
-    df['urlToImage'] = df['urlToImage'].fillna('https://placehold.co/400x200/cccccc/000000?text=No+Image')
+    # ✅ Use first sentence as fallback if LLM failed
+    df['article_text'] = df['article_text'].apply(lambda x: x if x and len(x.split('.')) > 1 else (x.split('.')[0] + '.' if x else "No summary available."))
 
+    df['article_text'].fillna("Summary not available.", inplace=True)
+    df['urlToImage'].fillna('https://placehold.co/400x200/cccccc/000000?text=No+Image', inplace=True)
     return df
 
 @st.cache_data(ttl=86400)
@@ -182,6 +191,8 @@ def load_and_transform_data():
     df = load_raw_data()
     if df.empty:
         return df
+    if 'article_text' not in df.columns:
+        df['article_text'] = None
     if 'urlToImage' not in df.columns:
         df['urlToImage'] = None
     df = assign_labels_and_scores(df)
