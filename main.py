@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import base64
 from data_loader import load_and_transform_data, get_media_names, get_countries, get_actors
 from contextual_all_intents_v2 import CA  # Your influence scores
 
@@ -12,56 +11,44 @@ st.set_page_config(
     layout="wide"
 )
 
-
 # ----------------------------------------------------------
-#  CFA BACKGROUND WATERMARK
+#  CFA BACKGROUND WATERMARK (HOSTED URL)
 # ----------------------------------------------------------
 def add_cfa_background():
-    try:
-        with open("CFA_Logo.png", "rb") as f:
-            encoded = base64.b64encode(f.read()).decode()
+    st.markdown(
+        """
+        <style>
+        .stApp {
+            background-image: url('https://opportunities.codeforafrica.org/wp-content/uploads/sites/5/2015/11/1-Zq7KnTAeKjBf6eENRsacSQ.png');
+            background-size: 30%;
+            background-position: center;
+            background-repeat: no-repeat;
+            background-attachment: fixed;
+        }
 
-        st.markdown(
-            f"""
-            <style>
-            .stApp {{
-                background-image: url("data:image/png;base64,{encoded}");
-                background-size: 40%;
-                background-position: center;
-                background-repeat: no-repeat;
-                background-attachment: fixed;
-            }}
-
-            .stApp::before {{
-                content: "";
-                position: fixed;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                background-image: inherit;
-                background-size: inherit;
-                background-position: inherit;
-                background-repeat: inherit;
-                opacity: 0.06;
-                z-index: -1;
-            }}
-            </style>
-            """,
-            unsafe_allow_html=True
-        )
-
-    except FileNotFoundError:
-        st.warning("⚠️ cfa_logo_light.png not found — CfA watermark disabled.")
+        .stApp::before {
+            content: "";
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background-image: inherit;
+            background-size: inherit;
+            background-position: inherit;
+            background-repeat: inherit;
+            opacity: 0.06;
+            z-index: -1;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
 
 add_cfa_background()
-
 
 # ----------------------------------------------------------
 #  LOAD DATA
 # ----------------------------------------------------------
 df = load_and_transform_data()
-
 
 # ----------------------------------------------------------
 #  SIDEBAR FILTERS
@@ -78,7 +65,6 @@ with st.sidebar:
 
     tones = ["All"] + sorted(df['tone'].dropna().unique())
     selected_tone = st.selectbox("Tone", tones)
-
 
 # ----------------------------------------------------------
 #  APPLY FILTERS
@@ -100,33 +86,31 @@ if selected_intent != "All":
 if selected_tone != "All":
     filtered = filtered[filtered['tone'] == selected_tone]
 
-
 # ----------------------------------------------------------
 #  PAGE TITLE
 # ----------------------------------------------------------
-st.title("🌍 Vulnerability Index Monitoring Dashboard")
-
+st.title("🌍 Vulnerability Index Tool")
 
 # ----------------------------------------------------------
-#  CONTEXTUAL INFLUENCE INDEX
+#  CONTEXTUAL INFLUENCE INDEX (CACHED)
 # ----------------------------------------------------------
+@st.cache_data
+def get_influence_score(actor, country):
+    scores = [CA[i].get(actor, {}).get(country, 0) for i in CA]
+    return sum(scores)/len(scores) if scores else 0
+
 if selected_country != "All" and selected_actor != "All":
     try:
-        scores = [CA[i].get(selected_actor, {}).get(selected_country, 0) for i in CA]
-        avg_score = sum(scores) / len(scores) if scores else 0
-
+        avg_score = get_influence_score(selected_actor, selected_country)
         st.metric(
             "Contextual Influence Index",
             f"{avg_score:.2f}",
             help="Composite score (0.0–1.0) based on debt, military, resources, and strategic alignment."
         )
-
     except Exception as e:
         st.error("Influence index unavailable")
 
-
 st.write(f"### Showing **{len(filtered)}** of **{len(df)}** articles")
-
 
 # ----------------------------------------------------------
 #  PAGINATION SETUP
@@ -150,7 +134,6 @@ with col3:
 start_idx = st.session_state.page * articles_per_page
 end_idx = start_idx + articles_per_page
 page_articles = filtered.iloc[start_idx:end_idx]
-
 
 # ----------------------------------------------------------
 #  ARTICLE CARDS WITH EXPANDER
