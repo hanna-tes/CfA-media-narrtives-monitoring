@@ -5,121 +5,82 @@ import numpy as np
 import pickle
 import os
 import urllib.request
-import time
-import requests
-from bs4 import BeautifulSoup
-from urllib.parse import urlparse
 
-# --- Configuration ---
-LOCAL_DATA_FILE = DATASET_URL = "https://github.com/your-username/your-repo/releases/download/v1.0/merged_dataset.csv"
+#release download URL — no spaces!
+BASE_URL = "https://github.com/hanna-tes/CfA-media-narrtives-monitoring/releases/download/v1.0"
 
-# --- Actor & Country Lists ---
-ACTORS = ["China", "France", "UnitedStates", "Russia", "Rwanda", "Saudi", "Turkey", "UAE", "Israel", "Iran", "NonState"]
-COUNTRIES = ["Senegal", "DRC", "CoteIvoire", "Ethiopia", "South Africa"]
-
-def extract_actor(text):
-    if pd.isna(text): return "Unknown"
-    text_lower = str(text).lower()
-    for actor in ACTORS:
-        if actor.replace("UnitedStates", "US").lower() in text_lower:
-            return actor
-    return "Unknown"
-
-def extract_country(text):
-    if pd.isna(text): return "Unknown"
-    text_lower = str(text).lower()
-    for country in COUNTRIES:
-        if country.lower() in text_lower or (country == "DRC" and "congo" in text_lower):
-            return country
-    return "Unknown"
-
-# --- ML Model Loading from GitHub Release ---
-def load_ml_artifacts():
+@st.cache_data(ttl=86400)
+def load_and_transform_data():
+    data_dir = "data"
+    os.makedirs(data_dir, exist_ok=True)
     ml_dir = "ml_outputs"
     os.makedirs(ml_dir, exist_ok=True)
     
-    # REPLACE THIS WITH YOUR ACTUAL GITHUB URL
-    BASE_URL = "https://github.com/hanna-tes/CfA-media-narrtives-monitoring/releases/tag/v1.0"
-    files = {
-        "tone_probs_all.npy": f"{BASE_URL}/tone_probs_all.npy",
-        "tone_le.pkl": f"{BASE_URL}/tone_le.pkl",
-        "strat_probs_all.npy": f"{BASE_URL}/strat_probs_all.npy",
-        "strat_le.pkl": f"{BASE_URL}/strat_le.pkl"
-    }
+    # Download dataset
+    dataset_path = os.path.join(data_dir, "merged_dataset.csv")
+    if not os.path.exists(dataset_path):
+        st.info("⏳ Downloading dataset from GitHub Release...")
+        urllib.request.urlretrieve(f"{BASE_URL}/merged_dataset.csv", dataset_path)
+    df = pd.read_csv(dataset_path)
     
-    # Download missing files
-    for filename, url in files.items():
-        local_path = os.path.join(ml_dir, filename)
+    # Download ML files
+    for fname in ["tone_probs_all.npy", "strat_probs_all.npy", "tone_le.pkl", "strat_le.pkl"]:
+        local_path = os.path.join(ml_dir, fname)
         if not os.path.exists(local_path):
-            st.info(f"⏳ Downloading {filename} (one-time, ~25MB total)...")
-            try:
-                urllib.request.urlretrieve(url, local_path)
-            except Exception as e:
-                st.error(f"❌ Download failed for {filename}: {e}")
-                return None, None, None, None
+            st.info(f"⏳ Downloading {fname}...")
+            urllib.request.urlretrieve(f"{BASE_URL}/{fname}", local_path)
     
-    # Load files
-    try:
-        tone_probs = np.load(os.path.join(ml_dir, "tone_probs_all.npy"))
-        with open(os.path.join(ml_dir, "tone_le.pkl"), "rb") as f:
-            tone_le = pickle.load(f)
-        strat_probs = np.load(os.path.join(ml_dir, "strat_probs_all.npy"))
-        with open(os.path.join(ml_dir, "strat_le.pkl"), "rb") as f:
-            strat_le = pickle.load(f)
-        return tone_le, strat_le, tone_probs, strat_probs
-    except Exception as e:
-        st.error(f"❌ Failed to load ML artifacts: {e}")
-        return None, None, None, None
+    # Load and apply predictions
+    tone_probs = np.load(os.path.join(ml_dir, "tone_probs_all.npy"))
+    strat_probs = np.load(os.path.join(ml_dir, "strat_probs_all.npy"))
+    with open(os.path.join(ml_dir, "tone_le.pkl"), "rb") as f: tone_le = pickle.load(f)
+    with open(os.path.join(ml_dir, "strat_le.pkl"), "rb") as f: strat_le = pickle.load(f)
+    
+    df['tone'] = tone_le.inverse_transform(tone_probs.argmax(axis=1))
+    df['strategic_intent'] = strat_le.inverse_transform(strat_probs.argmax(axis=1))
+    
+    # Add actor/country (same as before)
+    ACTORS = ["China", "France", "UnitedStates", "Russia", "Rwanda", "Saudi", "Turkey", "UAE", "Israel", "Iran", "NonState"]
+    COUNTRIES = ["Senegal", "DRC", "CoteIvoire", "Ethiopia", "South Africa"]
+    
+    def extract_actor(text):
+        if pd.isna(text): return "Unknown"
+        text_lower = str(text).lower()
+        for actor in ACTORS:
+            if actor.replace("UnitedStates", "US").lower() in text_lower:
+                return actor
+        return "Unknown"
+    
+    def extract_country(text):
+        if pd.isna(text): return "Unknown"
+        text_lower = str(text).lower()
+        for country in COUNTRIES:
+            if country.lower() in text_lower or (country == "DRC" and "congo" in text_lower):
+                return country
+        return "Unknown"
+    
+    df['inferred_actor'] = df['text'].apply(extract_actor)
+    df['target_country'] = df['text'].apply(extract_country)
+    
+    # Final: top 80
+    df['date_published'] = pd.to_datetime(df.get('publish_date', df.get('date_published')), errors='coerce').dt.date
+    df = df.sort_values('date_published', ascending=False).head(80).reset_index(drop=True)
+    
+    st.success("✅ Top 80 articles loaded!")
+    return df
 
-# --- Core Data Loading ---
+# Filter helpers (same as before)
 @st.cache_data(ttl=86400)
-def load_and_transform_data():
-    # Load raw data
-    try:
-        df = pd.read_csv(LOCAL_DATA_FILE)
-        df.rename(columns={
-            'title': 'headline',
-            'publish_date': 'date_published',
-            'media_name': 'source_name'
-        }, inplace=True)
-        df['date_published'] = pd.to_datetime(df['date_published'], errors='coerce').dt.date
-    except Exception as e:
-        st.error(f"❌ Failed to load raw  {e}")
-        return pd.DataFrame()
-    
-    # Load ML predictions
-    tone_le, strat_le, tone_probs, strat_probs = load_ml_artifacts()
-    if tone_probs is not None and len(tone_probs) == len(df):
-        df['tone'] = tone_le.inverse_transform(tone_probs.argmax(axis=1))
-        df['strategic_intent'] = strat_le.inverse_transform(strat_probs.argmax(axis=1))
-    else:
-        df['tone'] = "Factual"
-        df['strategic_intent'] = "Economic Dependency"
-    
-    # Add actor & country
-    if 'inferred_actor' not in df.columns:
-        df['inferred_actor'] = df['text'].apply(extract_actor)
-    if 'target_country' not in df.columns:
-        df['target_country'] = df['text'].apply(extract_country)
-    
-    # Ensure required columns
-    for col in ['url', 'headline', 'text', 'source_name']:
-        if col not in df.columns:
-            df[col] = "N/A"
-    
-    return df.reset_index(drop=True)
-
-@st.cache_data(ttl=7200)
 def get_media_names():
     df = load_and_transform_data()
-    return ["All"] + sorted(df['source_name'].dropna().unique().tolist())
+    return ["All"] + sorted(df['media_name'].dropna().unique().tolist())
 
-@st.cache_data(ttl=7200)
+@st.cache_data(ttl=86400)
 def get_countries():
     df = load_and_transform_data()
     return ["All"] + sorted(df['target_country'].dropna().unique().tolist())
 
-@st.cache_data(ttl=7200)
+@st.cache_data(ttl=86400)
 def get_actors():
     df = load_and_transform_data()
     return ["All"] + sorted(df['inferred_actor'].dropna().unique().tolist())
