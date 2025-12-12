@@ -94,7 +94,7 @@ def is_valid_image_url(url):
 @st.cache_data(ttl=86400)
 def load_raw_data():
     try:
-        df = pd.read_csv("merged_dataset.csv")
+        df = pd.read_csv("Merged_dataset_sample.csv")
         # Your dataset uses these columns — no 'headline'
         required_cols = ['article_text', 'posting_time', 'media_outlet', 'inferred_actor',
                          'strategic_intent', 'sector', 'tone', 'target_country', 'URL']
