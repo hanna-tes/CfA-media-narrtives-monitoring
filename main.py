@@ -2,6 +2,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import re # Added for advanced string/sentence extraction
 from data_loader import (
     load_and_transform_data,
     enrich_with_scraping_and_llm,
@@ -24,7 +25,6 @@ CA = compute_CAs(g,R)
 
 # --- NEW BACKGROUND AND LOGO ---
 NEW_BACKGROUND_URL = "https://media.istockphoto.com/id/1502033887/vector/beige-gray-grainy-gradient-background-poster-backdrop-noise-texture-webpage-header-wide.jpg?s=612x612&w=0&k=20&c=eGwiA8zZ4cobGeMz5QeRs5zKzlp1Rr-BcROwT4S22y0=" 
-# FIX: Using the correct GitHub RAW URL for the logo
 BRIGHT_LOGO_URL = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/main/CFA_Logo.png"
 
 
@@ -133,9 +133,51 @@ with st.spinner("Enriching articles..."):
     def progress_callback(p, msg):
         progress_bar.progress(min(p, 1.0))
         status_text.text(msg)
+    # df is the DataFrame containing the full 'article_text'
     df = enrich_with_scraping_and_llm(df_base, progress_callback=progress_callback)
 progress_bar.empty()
 status_text.empty()
+
+# --- NEW: Recommended Summary Preprocessing Step ---
+# This step simulates the output of an LLM or summarizer by creating clean 
+# 'llm_summary' and 'display_headline' columns from the raw 'article_text'.
+
+@st.cache_data
+def create_display_text(df_in):
+    df_out = df_in.copy()
+    
+    def extract_summary_and_headline(text):
+        if not isinstance(text, str) or not text.strip():
+            return 'Summary extraction pending or failed.', 'Article Snippet (No Text)'
+        
+        # 1. Determine the Headline (first sentence)
+        headline_match = re.search(r'[^.?!]*[.?!]', text)
+        headline = headline_match.group(0).strip() if headline_match else 'Article Snippet'
+        
+        # 2. Determine the Summary (first 1-2 sentences)
+        if headline_match:
+            # Check for a second sentence
+            text_after_first = text[headline_match.end():]
+            second_sentence_match = re.search(r'[^.?!]*[.?!]', text_after_first)
+            
+            if second_sentence_match and headline_match.end() + second_sentence_match.end() < 500:
+                summary = headline + " " + second_sentence_match.group(0).strip()
+            else:
+                summary = headline
+        else:
+            # Fallback for non-sentence structures
+            summary = text[:200].strip() + '...'
+            
+        return summary, headline
+
+    # Apply the summary extraction
+    results = df_out['article_text'].apply(lambda x: extract_summary_and_headline(x))
+    df_out['llm_summary'] = [r[0] for r in results]
+    df_out['display_headline'] = [r[1] for r in results]
+    
+    return df_out
+
+df = create_display_text(df)
 
 # Sidebar filters
 with st.sidebar:
@@ -216,14 +258,11 @@ influence_delta_str = f"{influence_delta:+.2f}"
 # Tone Score (Assuming tone mapping: Positive: 1, Neutral: 0, Negative: -1)
 if 'tone' in filtered.columns:
     # --- CRITICAL FIX: Update Tone Mapping to use provided categories ---
-    # Based on general sentiment analysis principles, Factual is Neutral (0),
-    # while Sensationalist, Cynical, and Alarmist imply increasing levels of negative sentiment.
     tone_mapping = {
         'Factual': 0.0,
         'Sensationalist': -0.3, # Moderately Negative
         'Cynical': -0.8,         # Highly Negative
         'Alarmist': -1.0,        # Critically Negative
-        # Add 'Positive' or 'Neutral' if they exist in the dataset but were missed
         'Positive': 1.0,
         'Neutral': 0.0
     }
@@ -327,11 +366,11 @@ page_articles = filtered.iloc[start_idx:end_idx]
 # Display Articles 
 for _, row in page_articles.iterrows():
     
-    article_text = str(row.get('article_text', 'No summary available.'))
-    image_url = str(row.get('urlToImage', None)) 
-
-    headline = article_text.split('.')[0] + "." if article_text and article_text != 'No summary available.' else "No Headline Available"
+    # --- FIX: Use the pre-processed columns for display ---
+    summary_display = str(row.get('llm_summary', 'Summary extraction failed.'))
+    headline = str(row.get('display_headline', 'Article Snippet (No Headline)'))
     
+    image_url = str(row.get('urlToImage', None)) 
     media = str(row.get('media_outlet', 'Unknown'))
     target_country = str(row.get('target_country', 'N/A'))
     inferred_actor = str(row.get('inferred_actor', 'N/A'))
@@ -360,7 +399,7 @@ for _, row in page_articles.iterrows():
             <div style="flex: 1;">
                 <div class="header">{headline}</div>
                 <div class="meta">Source: {media} – {posting_time}</div>
-                <div class="summary">{article_text}</div>
+                <div class="summary">{summary_display}</div>
                 <div class="tags">
                     <span class="tag">Tone: {tone}</span>
                     <span class="tag">Intent: {intent}</span>
