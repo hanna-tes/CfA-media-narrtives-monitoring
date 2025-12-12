@@ -1,36 +1,23 @@
-# main.py
 import streamlit as st
 import pandas as pd
-from data_loader import load_and_transform_data, get_media_names, get_countries, get_actors
+# Import the new scraping function
+from data_loader import (
+    load_and_transform_data, 
+    get_media_names, 
+    get_countries, 
+    get_actors,
+    scrape_og_image # <-- New import
+)
 from contextual_all_intents_v2 import CA  # Your influence scores
 
 # ----------------------------------------------------------
-#  PAGE CONFIG & CFA BRANDING
+#  PAGE CONFIG (Background Image Removed)
 # ----------------------------------------------------------
 st.set_page_config(
     page_title="Vulnerability Index Tool",
     layout="wide"
 )
 
-# Add CFA logo as subtle watermark
-def add_cfa_background():
-    st.markdown(
-        """
-        <style>
-        .stApp {
-            background-image: url('https://opportunities.codeforafrica.org/wp-content/uploads/sites/5/2015/11/1-Zq7KnTAeKjBf6eENRsacSQ.png'); 
-            background-size: 30%;
-            background-position: center;
-            background-repeat: no-repeat;
-            background-attachment: fixed;
-            opacity: 0.06;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True
-    )
-
-add_cfa_background()
 # ----------------------------------------------------------
 #  LOAD DATA
 # ----------------------------------------------------------
@@ -109,7 +96,9 @@ col1, col2, col3 = st.columns([1, 2, 1])
 with col1:
     if st.button("⬅ Previous") and st.session_state.page > 0:
         st.session_state.page -= 1
-
+with col2:
+    st.markdown(f"<p style='text-align: center;'>Page {st.session_state.page + 1} of {total_pages}</p>", unsafe_allow_html=True)
+    
 with col3:
     if st.button("Next ➡") and st.session_state.page < total_pages - 1:
         st.session_state.page += 1
@@ -119,23 +108,45 @@ end_idx = start_idx + articles_per_page
 page_articles = filtered.iloc[start_idx:end_idx]
 
 # ----------------------------------------------------------
-#  ARTICLE CARDS WITH EXPANDER
+#  ARTICLE CARDS WITH SCRAPED IMAGE
 # ----------------------------------------------------------
 for _, row in page_articles.iterrows():
-    with st.expander(f"{row['article_text'][:100]}..."):
-        st.caption(
-            f"**Target Country**: {row['target_country']} | "
-            f"**Foreign Actor**: {row['inferred_actor']}"
-        )
+    
+    # 1. SCALING WARNING: This scraping operation is what will introduce delays!
+    # It will run up to 6 times every time you click 'Next ➡' or change a filter.
+    image_url = scrape_og_image(row.get('URL'))
 
-        st.write(
-            row['article_text'] if pd.notna(row['article_text']) else "No summary available."
-        )
+    # Use columns to place the image next to the expander
+    img_col, text_col = st.columns([1, 4])
+    
+    with img_col:
+        # Display the scraped image if found
+        if image_url:
+            st.image(image_url, width=120, caption=row['media_outlet'])
+        else:
+            st.info("No featured image found.")
 
-        st.markdown(
-            f"**Tone**: `{row['tone']}` | "
-            f"**Strategic Intent**: `{row['strategic_intent']}`"
-        )
+    with text_col:
+        # The expander contains the article summary and details
+        # Added the posting time to the expander title for better context
+        posting_time_str = row['posting_time'].strftime('%Y-%m-%d') if pd.notna(row['posting_time']) else "Date Unknown"
+        
+        with st.expander(f"**{row['article_text'][:100]}...** (Source: {row['media_outlet']} - {posting_time_str})"):
+            st.caption(
+                f"**Target Country**: {row['target_country']} | "
+                f"**Foreign Actor**: {row['inferred_actor']}"
+            )
 
-        if pd.notna(row.get('URL', None)):
-            st.markdown(f"[🔗 Read full article]({row['URL']})")
+            st.write(
+                row['article_text'] if pd.notna(row['article_text']) else "No summary available."
+            )
+
+            st.markdown(
+                f"**Tone**: `{row['tone']}` | "
+                f"**Strategic Intent**: `{row['strategic_intent']}`"
+            )
+
+            if pd.notna(row.get('URL', None)):
+                st.markdown(f"[🔗 Read full article]({row['URL']})")
+    
+    st.markdown("---") # Separator between articles for clarity
