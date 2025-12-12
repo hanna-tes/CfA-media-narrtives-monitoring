@@ -1,6 +1,7 @@
 # main.py
 import streamlit as st
 import pandas as pd
+import plotly.express as px # Added for Time-Series Trend Analysis
 from data_loader import (
     load_and_transform_data,
     enrich_with_scraping_and_llm,
@@ -13,8 +14,9 @@ from contextual_all_intents_v2 import CA
 
 # --- NEW BACKGROUND AND LOGO ---
 NEW_BACKGROUND_URL = "https://media.istockphoto.com/id/1502033887/vector/beige-gray-grainy-gradient-background-poster-backdrop-noise-texture-webpage-header-wide.jpg?s=612x612&w=0&k=20&c=eGwiA8zZ4cobGeMz5QeRs5zKzlp1Rr-BcROwT4S22y0=" 
-# Using a clearly visible logo
-BRIGHT_LOGO_URL = "https://upload.wikimedia.org/wikipedia/commons/0/07/Code_for_Africa_logo_white.png"
+# FIX: Using a stable and visible white logo URL
+BRIGHT_LOGO_URL = "https://upload.wikimedia.org/wikipedia/commons/0/07/Code_for_Africa_logo_white.png" 
+
 
 # 🎨 Custom CSS for theme-aware dark cards
 st.markdown(f"""
@@ -27,7 +29,7 @@ st.markdown(f"""
     background-attachment: fixed;
 }}
 /* Ensure main text elements use Streamlit's theme color for visibility */
-h1, h2, h3, h4, h5, h6, .css-1d3w5av, .stAlert p, .stMarkdown, .stMetric .css-1ndc21z, .stMetric .css-1ndc21z > div:first-child {{ 
+h1, h2, h3, h4, h5, h6, .css-1d3w5av, .stAlert p, .stMarkdown, .stMetric .css-1ndc21z, .stMetric .css-1ndc21z > div:first-child, .stPlotlyChart .modebar {{ 
     color: var(--text-color) !important; 
 }}
 
@@ -142,8 +144,6 @@ def get_influence_score(actor, country):
         return 0.0
         
     # FIX: Normalize input case using .title() to match the TitleCase keys in contextual_all_intents_v2.py
-    # This converts "united states" to "United States", which is a key in your data.
-    # We strip 'All' first just in case it somehow makes it through.
     actor_normalized = actor.title() if actor != 'All' else actor
     country_normalized = country.title() if country != 'All' else country
     
@@ -153,13 +153,103 @@ def get_influence_score(actor, country):
     # Calculate average score
     return sum(scores) / len(CA) if CA else 0.0
 
+current_influence_score = 0.0
 if selected_country != "All" and selected_actor != "All":
-    avg_score = get_influence_score(selected_actor, selected_country)
-    st.metric("Contextual Influence Index", f"{avg_score:.2f}")
-else:
-    st.info("Select a Foreign Actor and Target Country to see the Influence Index.")
+    current_influence_score = get_influence_score(selected_actor, selected_country)
+    
+# --- 1. KPI Metrics ---
+st.header("📊 Key Performance Indicators")
 
+# Calculate KPIs
+current_article_count = len(filtered)
+# --- Mock Data for Delta Calculation (REPLACE WITH REAL HISTORICAL DATA LATER) ---
+# A fixed value used for comparison, typically from the previous period (e.g., last week/day)
+# Here, we use a simple percentage for demonstration.
+previous_article_count = len(df) * 0.95 
+article_delta = current_article_count - previous_article_count
+article_delta_str = f"{article_delta:,.0f}"
+
+# Mock previous Influence Score
+previous_influence_score = current_influence_score * 0.95 
+influence_delta = current_influence_score - previous_influence_score
+influence_delta_str = f"{influence_delta:+.2f}"
+
+# Tone Score (Assuming tone mapping: Positive: 1, Neutral: 0, Negative: -1)
+if 'tone' in filtered.columns:
+    tone_mapping = {'Positive': 1, 'Neutral': 0, 'Negative': -1}
+    filtered['tone_numeric'] = filtered['tone'].map(tone_mapping).fillna(0) # Fill N/A with 0 (Neutral)
+    current_tone_score = filtered['tone_numeric'].mean() if not filtered.empty else 0.0
+    previous_tone_score = 0.1 # Mock previous average tone
+    tone_delta = current_tone_score - previous_tone_score
+    tone_delta_str = f"{tone_delta:+.2f}"
+else:
+    current_tone_score = 0.0
+    tone_delta_str = "N/A"
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    st.metric(
+        label="Total Articles Analyzed",
+        value=f"{current_article_count:,.0f}",
+        delta=article_delta_str,
+        delta_color="normal" 
+    )
+
+with col2:
+    st.metric(
+        label="Average Tone Score (Sentiment)",
+        value=f"{current_tone_score:.2f}",
+        delta=tone_delta_str,
+        # Inverse delta: Negative tone is bad, so a drop in the score (more negative) should be "normal" (red)
+        delta_color="inverse" 
+    )
+
+with col3:
+    st.metric(
+        label="Contextual Influence Index",
+        value=f"{current_influence_score:.2f}",
+        delta=influence_delta_str,
+        # Inverse delta: Higher influence/vulnerability is bad, so an increase should be "inverse" (red)
+        delta_color="inverse"
+    )
+
+st.markdown("---")
+
+# --- 2. Time-Series Trend Analysis ---
+st.header("📈 Article Volume Trend")
+
+if 'posting_time' in filtered.columns and not filtered.empty:
+    
+    # Ensure 'posting_time' is datetime (crucial for time-series aggregation)
+    filtered['posting_time'] = pd.to_datetime(filtered['posting_time'], errors='coerce')
+    filtered.dropna(subset=['posting_time'], inplace=True)
+    
+    # Aggregate article count by day
+    time_series_data = filtered.resample('D', on='posting_time')['URL'].count().reset_index()
+    time_series_data.columns = ['Date', 'Article Count']
+    
+    # Create the interactive Plotly line chart .
+    fig = px.line(
+        time_series_data,
+        x='Date',
+        y='Article Count',
+        title=f'Daily Article Volume for {selected_actor} in {selected_country}',
+        labels={'Article Count': 'Number of Articles'},
+        template='plotly_dark' 
+    )
+    
+    # Customize layout for better appearance
+    fig.update_traces(mode='lines+markers', marker_size=5)
+    fig.update_layout(hovermode="x unified", title_x=0.5)
+    
+    st.plotly_chart(fig, use_container_width=True)
+else:
+    st.info("Insufficient time-series data to display a trend. Filter criteria may be too narrow or 'posting_time' data is missing/invalid.")
+    
+st.markdown("---")
 st.write(f"### Showing **{len(filtered)}** of **{len(df)}** articles")
+
 
 # Pagination (5 per page)
 articles_per_page = 5
@@ -190,12 +280,14 @@ for _, row in page_articles.iterrows():
     posting_time = "Date Unknown"
     if pd.notna(row.get('posting_time')):
         try:
-            posting_time = row['posting_time'].strftime('%Y-%m-%d %H:%M')
-        except:
+            # Note: We rely on the datetime object created in load_raw_data/enrich_with_scraping_and_llm
+            if isinstance(row['posting_time'], pd.Timestamp):
+                 posting_time = row['posting_time'].strftime('%Y-%m-%d %H:%M')
+        except Exception:
             pass
 
     # Image rendering logic
-    display_image = image_url if image_url and isinstance(image_url, str) else 'https://placehold.co/400x200/cccccc/000000?text=No+Image'
+    display_image = image_url if image_url and isinstance(image_url, str) and image_url != 'None' else 'https://placehold.co/400x200/cccccc/000000?text=No+Image'
 
     # 🎨 Render Card
     st.markdown(f"""
