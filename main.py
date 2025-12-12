@@ -1,10 +1,8 @@
 import streamlit as st
 import pandas as pd
 import base64
-
 from data_loader import load_and_transform_data, get_media_names, get_countries, get_actors
 from contextual_all_intents_v2 import CA  # Your influence scores
-
 
 # ----------------------------------------------------------
 #  PAGE CONFIG
@@ -34,7 +32,6 @@ def add_cfa_background():
                 background-attachment: fixed;
             }}
 
-            /* Add faint overlay for readability */
             .stApp::before {{
                 content: "";
                 position: fixed;
@@ -46,7 +43,7 @@ def add_cfa_background():
                 background-size: inherit;
                 background-position: inherit;
                 background-repeat: inherit;
-                opacity: 0.06; /* adjust transparency as needed */
+                opacity: 0.06;
                 z-index: -1;
             }}
             </style>
@@ -56,7 +53,6 @@ def add_cfa_background():
 
     except FileNotFoundError:
         st.warning("⚠️ cfa_logo_light.png not found — CfA watermark disabled.")
-
 
 add_cfa_background()
 
@@ -133,28 +129,49 @@ st.write(f"### Showing **{len(filtered)}** of **{len(df)}** articles")
 
 
 # ----------------------------------------------------------
-#  ARTICLE CARDS
+#  PAGINATION SETUP
 # ----------------------------------------------------------
-for _, row in filtered.iterrows():
-    st.subheader(row['article_text'][:100] + "...")
+articles_per_page = 10
+total_pages = (len(filtered) - 1) // articles_per_page + 1
 
-    st.caption(
-        f"**Target Country**: {row['target_country']} | "
-        f"**Foreign Actor**: {row['inferred_actor']}"
-    )
+if "page" not in st.session_state:
+    st.session_state.page = 0
 
-    st.write(
-        row['article_text']
-        if pd.notna(row['article_text'])
-        else "No summary available."
-    )
+col1, col2, col3 = st.columns([1, 2, 1])
 
-    st.markdown(
-        f"**Tone**: `{row['tone']}` | "
-        f"**Strategic Intent**: `{row['strategic_intent']}`"
-    )
+with col1:
+    if st.button("⬅ Previous") and st.session_state.page > 0:
+        st.session_state.page -= 1
 
-    if 'URL' in row and pd.notna(row['URL']):
-        st.markdown(f"[🔗 Read full article]({row['URL']})")
+with col3:
+    if st.button("Next ➡") and st.session_state.page < total_pages - 1:
+        st.session_state.page += 1
 
-    st.divider()
+start_idx = st.session_state.page * articles_per_page
+end_idx = start_idx + articles_per_page
+page_articles = filtered.iloc[start_idx:end_idx]
+
+
+# ----------------------------------------------------------
+#  ARTICLE CARDS WITH EXPANDER
+# ----------------------------------------------------------
+for _, row in page_articles.iterrows():
+    with st.expander(f"{row['article_text'][:100]}..."):
+        st.caption(
+            f"**Target Country**: {row['target_country']} | "
+            f"**Foreign Actor**: {row['inferred_actor']}"
+        )
+
+        st.write(
+            row['article_text'] if pd.notna(row['article_text']) else "No summary available."
+        )
+
+        st.markdown(
+            f"**Tone**: `{row['tone']}` | "
+            f"**Strategic Intent**: `{row['strategic_intent']}`"
+        )
+
+        if pd.notna(row.get('URL', None)):
+            st.markdown(f"[🔗 Read full article]({row['URL']})")
+
+st.write(f"Page {st.session_state.page + 1} of {total_pages}")
