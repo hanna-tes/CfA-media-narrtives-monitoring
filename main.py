@@ -10,25 +10,32 @@ from data_loader import (
 )
 from contextual_all_intents_v2 import CA
 
-# --- 1. NEW BACKGROUND IMAGE URL ---
-# Using a simple, abstract dark background image
-NEW_BACKGROUND_URL = "https://images.unsplash.com/photo-1542831371-29b0f74f9d13?q=80&w=1940&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D"
+# --- NEW BACKGROUND AND LOGO ---
+# 1. New, slightly brighter background image
+NEW_BACKGROUND_URL = "https://images.unsplash.com/photo-1518770660439-4630ee79dee7?q=80&w=2070&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D" # A subtle, high-tech circuit board/data image
+# 2. A placeholder for a brighter logo (since the previous was too dark)
+BRIGHT_LOGO_URL = "https://opportunities.codeforafrica.org/wp-content/uploads/sites/5/2023/12/CfA-Logo-White-Green.png" 
 
-# 🎨 Custom CSS for dark theme + cards
+
+# 🎨 Custom CSS for theme-aware dark cards
 st.markdown(f"""
 <style>
-body {{
-    background-color: #0e0e0e;
-    color: #ffffff;
-}}
+/* -------------------- THEME AWARE STYLES -------------------- */
+/* Set background image for the app */
 .stApp {{
-    /* Updated background image */
     background-image: url("{NEW_BACKGROUND_URL}");
     background-size: cover;
     background-attachment: fixed;
 }}
+/* Ensure main text elements use Streamlit's theme color for visibility */
+h1, h2, h3, h4, h5, h6, .css-1d3w5av, .stAlert p {{ 
+    color: var(--text-color) !important; 
+}}
+
+/* -------------------- CARD-SPECIFIC STYLES (Always Dark) -------------------- */
 .card {{
-    background: #1e1e1e;
+    background: #1e1e1e; /* Dark card background */
+    color: #ffffff; /* White text inside dark card */
     border-radius: 12px;
     padding: 20px;
     margin: 15px 0;
@@ -77,13 +84,17 @@ body {{
     color: #60a5fa;
     text-decoration: underline;
 }}
+/* Pagination text styling for dark theme visibility */
+h5 {{
+    color: var(--text-color) !important;
+}}
 </style>
 """, unsafe_allow_html=True)
 
 st.set_page_config(page_title="Vulnerability Index Tool", layout="wide")
 
-# 🖼️ Logo in header
-st.image("https://opportunities.codeforafrica.org/wp-content/uploads/sites/5/2015/11/1-Zq7KnTAeKjBf6eENRsacSQ.png", width=150)
+# 🖼️ Logo in header (using the brighter logo)
+st.image(BRIGHT_LOGO_URL, width=150)
 st.title("🌍 Vulnerability Index Tool")
 
 # Load base data
@@ -158,7 +169,7 @@ page_articles = filtered.iloc[start_idx:end_idx]
 # Display Articles (no expander, styled card)
 for _, row in page_articles.iterrows():
     
-    # article_text now holds the LLM summary or the first sentence fallback
+    # article_text now holds the LLM summary or the robust sentence fallback
     article_text = str(row.get('article_text', 'No summary available.'))
     image_url = row.get('urlToImage', None)
 
@@ -179,10 +190,7 @@ for _, row in page_articles.iterrows():
         except:
             pass
 
-    # --- CORRECTED IMAGE RENDERING LOGIC ---
-    # The data_loader ensures image_url is either a specific article image, a media logo, 
-    # or the 'No+Image' placeholder. We use the placeholder URL to trigger the <div> fallback.
-    
+    # Image rendering logic (guaranteed to be article image, logo, or 'No+Image' placeholder URL)
     display_image = image_url if image_url and isinstance(image_url, str) else 'https://placehold.co/400x200/cccccc/000000?text=No+Image'
 
     # 🎨 Render Card
@@ -213,7 +221,7 @@ with col1:
     if st.button("⬅ Previous", on_click=lambda: st.session_state.update(page=max(0, st.session_state.page - 1)), disabled=(st.session_state.page == 0)):
         pass
 with col2:
-    st.markdown(f"<h5 style='text-align: center; color: #4A4A4A;'>Page {st.session_state.page + 1} of {total_pages}</h5>", unsafe_allow_html=True)
+    st.markdown(f"<h5 style='text-align: center; color: var(--text-color);'>Page {st.session_state.page + 1} of {total_pages}</h5>", unsafe_allow_html=True)
 with col3:
     if st.button("Next ➡", on_click=lambda: st.session_state.update(page=min(total_pages - 1, st.session_state.page + 1)), disabled=(st.session_state.page >= total_pages - 1)):
         pass
