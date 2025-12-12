@@ -107,7 +107,7 @@ ACTOR_LGBTQ = {
   "Russia":{"Senegal":0.02,"DRC":0.02,"CoteIvoire":0.02,"Ethiopia":0.02,"South Africa":0.00},
   "NonState":{"Senegal":0.00,"DRC":0.00,"CoteIvoire":0.00,"Ethiopia":0.00,"South Africa":0.50},
   # others small values
-  "Saudi":{"Senegal":0.01,"DRC":0.01,"CoteIvoire":0.01,"Ethiopia":0:01,"South Africa":0.00},
+  "Saudi":{"Senegal":0.01,"DRC":0.01,"CoteIvoire":0.01,"Ethiopia":0.01,"South Africa":0.00},
   "UAE":{"Senegal":0.02,"DRC":0.02,"CoteIvoire":0.02,"Ethiopia":0.02,"South Africa":0.00},
   "Turkey":{"Senegal":0.02,"DRC":0.02,"CoteIvoire":0.02,"Ethiopia":0.02,"South Africa":0.08},
   "Israel":{"Senegal":0.01,"DRC":0.01,"CoteIvoire":0.01,"Ethiopia":0.01,"South Africa":0.38},
