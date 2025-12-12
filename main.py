@@ -10,68 +10,73 @@ from data_loader import (
 )
 from contextual_all_intents_v2 import CA
 
+# --- 1. NEW BACKGROUND IMAGE URL ---
+# Using a simple, abstract dark background image
+NEW_BACKGROUND_URL = "https://images.unsplash.com/photo-1542831371-29b0f74f9d13?q=80&w=1940&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D"
+
 # 🎨 Custom CSS for dark theme + cards
-st.markdown("""
+st.markdown(f"""
 <style>
-body {
+body {{
     background-color: #0e0e0e;
     color: #ffffff;
-}
-.stApp {
-    background-image: url("https://opportunities.codeforafrica.org/wp-content/uploads/sites/5/2015/11/1-Zq7KnTAeKjBf6eENRsacSQ.png");
+}}
+.stApp {{
+    /* Updated background image */
+    background-image: url("{NEW_BACKGROUND_URL}");
     background-size: cover;
     background-attachment: fixed;
-}
-.card {
+}}
+.card {{
     background: #1e1e1e;
     border-radius: 12px;
     padding: 20px;
     margin: 15px 0;
     box-shadow: 0 4px 8px rgba(0,0,0,0.3);
     transition: transform 0.2s;
-}
-.card:hover {
+}}
+.card:hover {{
     transform: translateY(-2px);
     box-shadow: 0 6px 12px rgba(0,0,0,0.4);
-}
-.image-container img {
+}}
+.image-container img {{
     width: 180px;
     height: auto;
     object-fit: cover;
     border-radius: 8px;
     margin-right: 15px;
-}
-.header {
+}}
+.header {{
     font-size: 1.2em;
     font-weight: bold;
     margin-bottom: 5px;
-}
-.meta {
+}}
+.meta {{
     font-size: 0.9em;
     color: #aaa;
     margin-bottom: 10px;
-}
-.summary {
+}}
+.summary {{
     font-size: 1em;
     line-height: 1.6;
     margin-bottom: 10px;
-}
-.tags {
+}}
+.tags {{
     display: flex;
     gap: 10px;
     margin-bottom: 10px;
-}
-.tag {
+}}
+.tag {{
     background: #2a2a2a;
     color: #4ade80;
     padding: 4px 8px;
     border-radius: 4px;
     font-size: 0.85em;
-}
-.link {
+}}
+.link {{
     color: #60a5fa;
     text-decoration: underline;
-}
+}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -95,6 +100,7 @@ with st.spinner("Enriching articles..."):
     def progress_callback(p, msg):
         progress_bar.progress(min(p, 1.0))
         status_text.text(msg)
+    # The enrichment function handles LLM fallback and image logo fallback
     df = enrich_with_scraping_and_llm(df_base, progress_callback=progress_callback)
 progress_bar.empty()
 status_text.empty()
@@ -102,9 +108,10 @@ status_text.empty()
 # Sidebar filters
 with st.sidebar:
     st.title("🔍 Filters")
-    selected_media = st.selectbox("Media Outlet", get_media_names())
-    selected_country = st.selectbox("Target Country", get_countries())
-    selected_actor = st.selectbox("Foreign Actor", get_actors())
+    # Ensuring "All" is available for selections
+    selected_media = st.selectbox("Media Outlet", ["All"] + get_media_names())
+    selected_country = st.selectbox("Target Country", ["All"] + get_countries())
+    selected_actor = st.selectbox("Foreign Actor", ["All"] + get_actors())
     intents = ["All"] + sorted(df['strategic_intent'].dropna().unique())
     selected_intent = st.selectbox("Strategic Intent", intents)
     tones = ["All"] + sorted(df['tone'].dropna().unique())
@@ -150,8 +157,14 @@ page_articles = filtered.iloc[start_idx:end_idx]
 
 # Display Articles (no expander, styled card)
 for _, row in page_articles.iterrows():
-    headline = str(row.get('article_text', 'No headline')).split('.')[0] + "."
+    
+    # article_text now holds the LLM summary or the first sentence fallback
     article_text = str(row.get('article_text', 'No summary available.'))
+    image_url = row.get('urlToImage', None)
+
+    # Use the first sentence of article_text for the headline
+    headline = article_text.split('.')[0] + "." if article_text and article_text != 'No summary available.' else "No Headline Available"
+    
     media = str(row.get('media_outlet', 'Unknown'))
     target_country = str(row.get('target_country', 'N/A'))
     inferred_actor = str(row.get('inferred_actor', 'N/A'))
@@ -166,14 +179,18 @@ for _, row in page_articles.iterrows():
         except:
             pass
 
-    image_url = row.get('urlToImage', None)
+    # --- CORRECTED IMAGE RENDERING LOGIC ---
+    # The data_loader ensures image_url is either a specific article image, a media logo, 
+    # or the 'No+Image' placeholder. We use the placeholder URL to trigger the <div> fallback.
+    
+    display_image = image_url if image_url and isinstance(image_url, str) else 'https://placehold.co/400x200/cccccc/000000?text=No+Image'
 
     # 🎨 Render Card
     st.markdown(f"""
     <div class="card">
         <div style="display: flex; align-items: flex-start;">
             <div class="image-container">
-                {f'<img src="{image_url}" alt="Article Image">' if image_url and isinstance(image_url, str) else '<div style="width: 180px; height: 120px; background: #333; display: flex; align-items: center; justify-content: center; border-radius: 8px;">No Image</div>'}
+                {f'<img src="{display_image}" alt="Article Image">' if 'No+Image' not in display_image else '<div style="width: 180px; height: 120px; background: #333; display: flex; align-items: center; justify-content: center; border-radius: 8px;">No Image</div>'}
             </div>
             <div style="flex: 1;">
                 <div class="header">{headline}</div>
