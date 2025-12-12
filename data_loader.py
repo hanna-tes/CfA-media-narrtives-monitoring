@@ -99,7 +99,7 @@ def load_raw_data():
         required_cols = [
             'URL', 'article_text', 'posting_time', 'media_outlet',
             'target_country', 'inferred_actor', 'tone', 'strategic_intent',
-            'urlToImage' # Ensure this column exists
+            'urlToImage' 
         ]
         for col in required_cols:
             if col not in df.columns:
@@ -169,18 +169,34 @@ def enrich_with_scraping_and_llm(df, progress_callback=None):
         else:
             content = scraped_content[url]
 
-        # 2. Summarize (LLM attempt with first sentence fallback)
+        # 2. Summarize (LLM attempt with robust sentence fallback)
         if url not in scraped_summary:
             summary = summarize_with_llama(content)
+            
             if summary == "LLM summarization failed." or summary == "Summary not available.":
                 if content and content != "No meaningful content found.":
-                    first_sentence = content.split('.')[0] + "."
+                    
+                    # --- IMPROVED ROBUST FALLBACK LOGIC ---
+                    sentences = content.split('.')
+                    fallback_summary_parts = [s.strip() for s in sentences if s.strip()]
+                    
+                    # 1. Attempt to use first sentence
+                    first_sentence = fallback_summary_parts[0] + "." if fallback_summary_parts else ""
+                    
                     if len(first_sentence) > 50: 
                         summary = first_sentence
                     else:
-                        summary = "No summary available."
+                        # 2. Use the first two or three sentences
+                        robust_summary = '. '.join(fallback_summary_parts[:3]) + "."
+                        
+                        if len(robust_summary) > 50:
+                            summary = robust_summary
+                        else:
+                            # 3. Final fallback: display whatever meaningful content was found
+                            summary = content if len(content) > 50 else "No detailed summary available, but article content found." 
                 else:
                     summary = "No summary available."
+            # --------------------------------------------
             scraped_summary[url] = summary
         
         # 3. Fetch Image with Clearbit Logo Fallback
@@ -208,12 +224,11 @@ def enrich_with_scraping_and_llm(df, progress_callback=None):
 
     # Map the final summary and image back to the DataFrame
     df['scraped_content'] = df['URL'].map(scraped_content).fillna(df['scraped_content'])
-    df['article_text'] = df['URL'].map(scraped_summary).fillna(df['article_text']) 
+    df['article_text'] = df['URL'].map(scraped_summary).fillna(df['article_text']) # article_text now holds the final summary/fallback
     df['urlToImage'] = df['URL'].map(scraped_image).fillna(df['urlToImage'])
 
-    # Final fillna for safety (though the loop should handle most of this)
+    # Final fillna for safety
     df['article_text'].fillna("No summary available.", inplace=True)
-    # The image column is now guaranteed to have a logo or the 'No+Image' placeholder
     df['urlToImage'].fillna('https://placehold.co/400x200/cccccc/000000?text=No+Image', inplace=True)
     return df
 
