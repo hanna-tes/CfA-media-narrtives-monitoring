@@ -9,18 +9,26 @@ from data_loader import (
     get_countries,
     get_actors
 )
-# Assuming CA is available from this import
-from contextual_all_intents_v2 import CA 
+# IMPORT FIX: Import the necessary functions from the context calculation script
+from contextual_all_intents_v2 import compute_gs, compute_R, compute_CAs, INTENT_FACTORS 
+
+# --- RUN CONTEXTUAL INFLUENCE MODEL ---
+# 1. Compute the raw factor scores (g)
+g = compute_gs()
+# 2. Compute the relative influence R-factors
+R = compute_R(g)
+# 3. Compute the final Contextual Influence Index (CA) lookup table
+CA = compute_CAs(g,R)
+# --- MODEL RUN COMPLETE ---
+
 
 # --- NEW BACKGROUND AND LOGO ---
 NEW_BACKGROUND_URL = "https://media.istockphoto.com/id/1502033887/vector/beige-gray-grainy-gradient-background-poster-backdrop-noise-texture-webpage-header-wide.jpg?s=612x612&w=0&k=20&c=eGwiA8zZ4cobGeMz5QeRs5zKzlp1Rr-BcROwT4S22y0=" 
-# FIX: Using the downloaded local file path for maximum stability.
-# !!! IMPORTANT: REPLACE THIS PATH WITH THE ACTUAL PATH TO YOUR LOGO FILE !!!
-LOCAL_LOGO_PATH = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/main/CFA_Logo.png" 
-BRIGHT_LOGO_URL = LOCAL_LOGO_PATH
+# FIX: Using the correct GitHub RAW URL for the logo
+BRIGHT_LOGO_URL = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/main/CFA_Logo.png"
 
 
-# 🎨 Custom CSS for theme-aware dark cards
+# 🎨 Custom CSS for theme-aware dark cards AND READABILITY FIX
 st.markdown(f"""
 <style>
 /* -------------------- THEME AWARE STYLES -------------------- */
@@ -31,9 +39,24 @@ st.markdown(f"""
     background-attachment: fixed;
 }}
 /* Ensure main text elements use Streamlit's theme color for visibility */
-h1, h2, h3, h4, h5, h6, .css-1d3w5av, .stAlert p, .stMarkdown, .stMetric .css-1ndc21z, .stMetric .css-1ndc21z > div:first-child, .stPlotlyChart .modebar {{ 
+h1, h2, h3, h4, h5, h6, .stAlert p, .stMarkdown, .stPlotlyChart .modebar {{ 
+    color: #1a1a1a !important; /* Dark color for section headers and general text */
+}}
+
+/* FIX: Ensure Metric Labels (small text above score) are dark and readable */
+.stMetric label, .stMetric .css-1ndc21z > div:first-child {{
+    color: #444444 !important; /* Dark gray for metric labels */
+    font-weight: bold;
+}}
+/* Ensure Metric Values (the large score numbers) are clearly visible */
+.stMetric .css-1ndc21z > div:last-child > div:first-child {{
+    color: #1a1a1a !important; /* Very dark for main scores */
+}}
+/* General text components using default text color (important for sidebars/select boxes) */
+.css-1d3w5av, .stText, .stSelectbox label, .stNumberInput label {{
     color: var(--text-color) !important; 
 }}
+
 
 /* -------------------- CARD-SPECIFIC STYLES (Always Dark) -------------------- */
 .card {{
@@ -121,8 +144,11 @@ with st.sidebar:
     selected_media = st.selectbox("Media Outlet", ["All"] + get_media_names())
     selected_country = st.selectbox("Target Country", ["All"] + get_countries())
     selected_actor = st.selectbox("Foreign Actor", ["All"] + get_actors())
-    intents = ["All"] + sorted(df['strategic_intent'].dropna().unique())
+    
+    # Intent list now sourced directly from the model script
+    intents = ["All"] + sorted(INTENT_FACTORS.keys())
     selected_intent = st.selectbox("Strategic Intent", intents)
+    
     tones = ["All"] + sorted(df['tone'].dropna().unique())
     selected_tone = st.selectbox("Tone", tones)
 
@@ -139,25 +165,32 @@ if selected_intent != "All":
 if selected_tone != "All":
     filtered = filtered[filtered['tone'] == selected_tone]
 
-# Influence Index Logic Fix
+# Influence Index Logic FIX (Use actual CA calculated above)
 @st.cache_data
-def get_influence_score(actor, country):
+def get_influence_score(actor, country, intent):
     if not actor or not country or not CA:
         return 0.0
         
-    # FIX: Normalize input case using .title() to match the TitleCase keys in contextual_all_intents_v2.py
+    # Normalize input case using .title() to match the TitleCase keys in contextual_all_intents_v2.py
     actor_normalized = actor.title() if actor != 'All' else actor
     country_normalized = country.title() if country != 'All' else country
     
-    # Calculate the sum of scores across all intents (i)
+    # If a specific intent is selected, use that score
+    if intent != "All":
+        # CA[intent][actor][country]
+        return CA.get(intent, {}).get(actor_normalized, {}).get(country_normalized, 0.0)
+    
+    # If "All" intents are selected, calculate the average score across all intents
     scores = [CA[i].get(actor_normalized, {}).get(country_normalized, 0) for i in CA]
     
     # Calculate average score
-    return sum(scores) / len(CA) if CA else 0.0
+    return sum(scores) / len(CA) if scores and len(scores) > 0 else 0.0
+
 
 current_influence_score = 0.0
 if selected_country != "All" and selected_actor != "All":
-    current_influence_score = get_influence_score(selected_actor, selected_country)
+    # Pass the selected intent to the function
+    current_influence_score = get_influence_score(selected_actor, selected_country, selected_intent)
     
 # --- 1. KPI Metrics ---
 st.header("📊 Key Performance Indicators")
@@ -169,14 +202,17 @@ previous_article_count = len(df) * 0.95
 article_delta = current_article_count - previous_article_count
 article_delta_str = f"{article_delta:,.0f}"
 
-previous_influence_score = current_influence_score * 0.95 
+# FIX: Mock previous influence score based on current score
+previous_influence_score = current_influence_score * 0.95 if current_influence_score > 0.05 else 0.0
 influence_delta = current_influence_score - previous_influence_score
 influence_delta_str = f"{influence_delta:+.2f}"
 
 # Tone Score (Assuming tone mapping: Positive: 1, Neutral: 0, Negative: -1)
 if 'tone' in filtered.columns:
     tone_mapping = {'Positive': 1, 'Neutral': 0, 'Negative': -1}
-    filtered['tone_numeric'] = filtered['tone'].map(tone_mapping).fillna(0)
+    # Clean and map tone scores
+    filtered['tone_clean'] = filtered['tone'].astype(str).str.title().str.strip()
+    filtered['tone_numeric'] = filtered['tone_clean'].map(tone_mapping).fillna(0)
     current_tone_score = filtered['tone_numeric'].mean() if not filtered.empty else 0.0
     previous_tone_score = 0.1
     tone_delta = current_tone_score - previous_tone_score
@@ -211,6 +247,13 @@ with col3:
         delta_color="inverse"
     )
 
+# Alert if Influence Index is high (e.g., > 0.6)
+if current_influence_score > 0.6 and current_influence_score < 0.8:
+    st.warning(f"⚠️ **Moderate Vulnerability Alert:** The Contextual Influence Index for {selected_actor} in {selected_country} is elevated ({current_influence_score:.2f}).")
+elif current_influence_score >= 0.8:
+    st.error(f"🚨 **High Vulnerability Warning:** The Contextual Influence Index for {selected_actor} in {selected_country} is critically high ({current_influence_score:.2f}).")
+
+
 st.markdown("---")
 
 # --- 2. Time-Series Trend Analysis ---
@@ -218,7 +261,7 @@ st.header("📈 Article Volume Trend")
 
 if 'posting_time' in filtered.columns and not filtered.empty:
     
-    # Ensure 'posting_time' is datetime (crucial for time-series aggregation)
+    # Ensure 'posting_time' is datetime
     filtered['posting_time'] = pd.to_datetime(filtered['posting_time'], errors='coerce')
     filtered.dropna(subset=['posting_time'], inplace=True)
     
@@ -226,7 +269,7 @@ if 'posting_time' in filtered.columns and not filtered.empty:
     time_series_data = filtered.resample('D', on='posting_time')['URL'].count().reset_index()
     time_series_data.columns = ['Date', 'Article Count']
     
-    # Create the interactive Plotly line chart .
+    # Create the interactive Plotly line chart 
     fig = px.line(
         time_series_data,
         x='Date',
@@ -263,7 +306,7 @@ page_articles = filtered.iloc[start_idx:end_idx]
 for _, row in page_articles.iterrows():
     
     article_text = str(row.get('article_text', 'No summary available.'))
-    image_url = str(row.get('urlToImage', None)) # Ensure it's a string
+    image_url = str(row.get('urlToImage', None)) 
 
     headline = article_text.split('.')[0] + "." if article_text and article_text != 'No summary available.' else "No Headline Available"
     
