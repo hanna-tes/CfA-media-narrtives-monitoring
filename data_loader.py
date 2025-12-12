@@ -7,6 +7,7 @@ from urllib.parse import urlparse, urljoin
 import time
 import random
 
+# --- Optional LLM Support ---
 client = None
 try:
     from groq import Groq
@@ -15,6 +16,7 @@ try:
 except Exception:
     client = None
 
+# --- Disinformation Labels ---
 KEYWORD_LABELS = {
     "Pro-Russia": ["russia", "kremlin", "putin", "russian forces", "moscow", "russian influence", "russia partnership"],
     "Anti-West": ["western sanctions", "western interference", "nato", "eu policy", "western powers", "western interests", "western hypocrisy"],
@@ -150,7 +152,7 @@ def summarize_with_llama(text):
     except Exception:
         return "LLM summarization failed."
 
-# ✅ THIS FUNCTION IS NO LONGER CACHED — it handles scraping with progress
+# ✅ This function is NOT cached — handles live scraping with progress
 def enrich_articles_with_scraping_live(df, progress_callback=None):
     if 'scraped_data' not in st.session_state:
         st.session_state.scraped_data = {'url_to_text': {}, 'url_to_image': {}}
@@ -199,7 +201,7 @@ def enrich_articles_with_scraping_live(df, progress_callback=None):
 
     return df
 
-# ✅ CACHED FUNCTION — NO CALLBACK, NO SIDE EFFECTS
+# ✅ CACHED: Pure data loading + labeling (no side effects)
 @st.cache_data(ttl=86400)
 def load_and_transform_data():
     df = load_raw_data()
@@ -211,6 +213,24 @@ def load_and_transform_data():
     if 'urlToImage' not in df.columns:
         df['urlToImage'] = None
 
-    # Do NOT enrich here — do it outside caching
     df = assign_labels_and_scores(df)
     return df
+
+# ✅ FILTER HELPER FUNCTIONS — MUST BE PRESENT!
+@st.cache_data(ttl=86400)
+def get_media_names():
+    df = load_raw_data()
+    outlets = df['media_outlet'].dropna().unique()
+    return ["All"] + sorted(outlets.tolist())
+
+@st.cache_data(ttl=86400)
+def get_countries():
+    df = load_raw_data()
+    countries = df['target_country'].dropna().unique()
+    return ["All"] + sorted(countries.tolist())
+
+@st.cache_data(ttl=86400)
+def get_actors():
+    df = load_raw_data()
+    actors = df['inferred_actor'].dropna().unique()
+    return ["All"] + sorted(actors.tolist())
