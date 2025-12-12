@@ -65,7 +65,7 @@ def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
                     paras = content_container.find_all('p')
                     full_text = ' '.join([p.get_text(strip=True) for p in paras])
                     if len(full_text) > 50:
-                        return full_text[:3000]
+                        return full_text[:3000] # Return the raw scraped text
                 return "No meaningful content found."
 
             elif fetch_type == "image":
@@ -98,7 +98,8 @@ def load_raw_data():
         df = pd.read_csv("Merged_dataset_sample.csv")
         required_cols = [
             'URL', 'article_text', 'posting_time', 'media_outlet',
-            'target_country', 'inferred_actor', 'tone', 'strategic_intent'
+            'target_country', 'inferred_actor', 'tone', 'strategic_intent',
+            'urlToImage' # Ensure this column exists
         ]
         for col in required_cols:
             if col not in df.columns:
@@ -108,6 +109,8 @@ def load_raw_data():
             pd.to_datetime(df['posting_time'], format="%Y-%m-%d %H:%M:%S", errors='coerce')
             .fillna(pd.to_datetime(df['posting_time'], format="%d/%m/%Y %H:%M", errors='coerce'))
         )
+        # Add a column for the *original* article text content
+        df['scraped_content'] = df['article_text']
         return df
     except Exception as e:
         st.error(f"Failed to load merged_dataset.csv: {e}")
@@ -115,7 +118,7 @@ def load_raw_data():
 
 def summarize_with_llama(text):
     if not text or not client or len(text) < 150 or "No meaningful content" in text:
-        return "Summary not available."
+        return "LLM summarization failed." 
     if 'llm_cache' not in st.session_state:
         st.session_state.llm_cache = {}
     if text in st.session_state.llm_cache:
@@ -138,51 +141,79 @@ def summarize_with_llama(text):
 
 def enrich_with_scraping_and_llm(df, progress_callback=None):
     if 'scraped_data' not in st.session_state:
-        st.session_state.scraped_data = {'url_to_text': {}, 'url_to_image': {}}
+        st.session_state.scraped_data = {'url_to_text': {}, 'url_to_image': {}, 'url_to_summary': {}}
 
-    scraped_text = st.session_state.scraped_data['url_to_text']
+    scraped_content = st.session_state.scraped_data['url_to_text']
     scraped_image = st.session_state.scraped_data['url_to_image']
+    scraped_summary = st.session_state.scraped_data['url_to_summary']
 
-    needs_text = df['article_text'].isnull() | (df['article_text'] == '')
+    # Identify articles that need scraping/enrichment
+    needs_content = df['scraped_content'].isnull() | (df['scraped_content'] == '')
     needs_image = ~df['urlToImage'].notna()
-    needs_any = (needs_text | needs_image) & df['URL'].notnull()
+    needs_any = (needs_content | needs_image) & df['URL'].notnull()
     urls_to_fetch = df[needs_any]['URL'].dropna().unique()
 
     if len(urls_to_fetch) == 0:
-        df['article_text'] = df['URL'].map(scraped_text).fillna(df['article_text'])
+        # Map cached results back
+        df['scraped_content'] = df['URL'].map(scraped_content).fillna(df['scraped_content'])
+        df['article_text'] = df['URL'].map(scraped_summary).fillna(df['article_text'])
         df['urlToImage'] = df['URL'].map(scraped_image).fillna(df['urlToImage'])
         return df
 
     total = len(urls_to_fetch)
     for i, url in enumerate(urls_to_fetch):
-        if url not in scraped_text:
+        # 1. Scrape Content
+        if url not in scraped_content:
             content = fetch_content_with_retry(url, "snippet")
-            summary = summarize_with_llama(content)
-            scraped_text[url] = summary
+            scraped_content[url] = content
+        else:
+            content = scraped_content[url]
 
+        # 2. Summarize (LLM attempt with first sentence fallback)
+        if url not in scraped_summary:
+            summary = summarize_with_llama(content)
+            if summary == "LLM summarization failed." or summary == "Summary not available.":
+                if content and content != "No meaningful content found.":
+                    first_sentence = content.split('.')[0] + "."
+                    if len(first_sentence) > 50: 
+                        summary = first_sentence
+                    else:
+                        summary = "No summary available."
+                else:
+                    summary = "No summary available."
+            scraped_summary[url] = summary
+        
+        # 3. Fetch Image with Clearbit Logo Fallback
         if url not in scraped_image:
             img_url = fetch_content_with_retry(url, "image")
+            
+            # If the scraped image is not valid or None, use the domain logo
             if not is_valid_image_url(img_url):
                 try:
                     domain = urlparse(url).netloc.replace('www.', '')
+                    # Set the fallback to the Clearbit Logo URL
                     img_url = f"https://logo.clearbit.com/{domain}"
                 except Exception:
-                    img_url = 'https://placehold.co/400x200/cccccc/000000?text=No+Image'
+                    # Final safety net placeholder
+                    img_url = 'https://placehold.co/400x200/cccccc/000000?text=No+Image' 
+            
             scraped_image[url] = img_url
 
         if progress_callback:
             progress_callback((i + 1) / total, f"Enriching {i+1}/{total}...")
 
-    st.session_state.scraped_data['url_to_text'] = scraped_text
+    st.session_state.scraped_data['url_to_text'] = scraped_content
     st.session_state.scraped_data['url_to_image'] = scraped_image
+    st.session_state.scraped_data['url_to_summary'] = scraped_summary
 
-    df['article_text'] = df['URL'].map(scraped_text).fillna(df['article_text'])
+    # Map the final summary and image back to the DataFrame
+    df['scraped_content'] = df['URL'].map(scraped_content).fillna(df['scraped_content'])
+    df['article_text'] = df['URL'].map(scraped_summary).fillna(df['article_text']) 
     df['urlToImage'] = df['URL'].map(scraped_image).fillna(df['urlToImage'])
 
-    # ✅ Use first sentence as fallback if LLM failed
-    df['article_text'] = df['article_text'].apply(lambda x: x if x and len(x.split('.')) > 1 else (x.split('.')[0] + '.' if x else "No summary available."))
-
-    df['article_text'].fillna("Summary not available.", inplace=True)
+    # Final fillna for safety (though the loop should handle most of this)
+    df['article_text'].fillna("No summary available.", inplace=True)
+    # The image column is now guaranteed to have a logo or the 'No+Image' placeholder
     df['urlToImage'].fillna('https://placehold.co/400x200/cccccc/000000?text=No+Image', inplace=True)
     return df
 
@@ -201,14 +232,14 @@ def load_and_transform_data():
 @st.cache_data(ttl=86400)
 def get_media_names():
     df = load_raw_data()
-    return ["All"] + sorted(df['media_outlet'].dropna().unique().tolist())
+    return sorted(df['media_outlet'].dropna().unique().tolist())
 
 @st.cache_data(ttl=86400)
 def get_countries():
     df = load_raw_data()
-    return ["All"] + sorted(df['target_country'].dropna().unique().tolist())
+    return sorted(df['target_country'].dropna().unique().tolist())
 
 @st.cache_data(ttl=86400)
 def get_actors():
     df = load_raw_data()
-    return ["All"] + sorted(df['inferred_actor'].dropna().unique().tolist())
+    return sorted(df['inferred_actor'].dropna().unique().tolist())
