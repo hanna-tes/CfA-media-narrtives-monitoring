@@ -3,22 +3,25 @@ import streamlit as st
 import pandas as pd
 from data_loader import (
     load_and_transform_data,
+    enrich_with_scraping_and_llm,  # ← used for live enrichment
     get_media_names,
     get_countries,
     get_actors
 )
-
-# Import influence data (ensure contextual_all_intents_v2.py has NO syntax errors!)
-try:
-    from contextual_all_intents_v2 import CA
-except Exception as e:
-    st.error(f"Failed to import influence scores: {e}")
-    CA = {}
+from contextual_all_intents_v2 import CA  # Your influence scores
 
 st.set_page_config(page_title="Vulnerability Index Tool", layout="wide")
 
-# ---- Load data with progress ----
-with st.spinner("Loading and enriching articles..."):
+# ✅ STEP 1: Load base data (cached, fast)
+with st.spinner("Loading dataset..."):
+    df_base = load_and_transform_data()  # ← NO ARGUMENTS!
+
+if df_base.empty:
+    st.error("No data loaded. Please check merged_dataset.csv.")
+    st.stop()
+
+# ✅ STEP 2: Enrich with scraping (not cached, shows progress)
+with st.spinner("Enriching articles with content and images..."):
     progress_bar = st.progress(0)
     status_text = st.empty()
 
@@ -26,16 +29,12 @@ with st.spinner("Loading and enriching articles..."):
         progress_bar.progress(min(p, 1.0))
         status_text.text(msg)
 
-    df = load_and_transform_data(progress_callback=progress_callback)
+    df = enrich_with_scraping_and_llm(df_base, progress_callback=progress_callback)
 
 progress_bar.empty()
 status_text.empty()
 
-if df.empty:
-    st.error("No data loaded. Please check merged_dataset.csv.")
-    st.stop()
-
-# ---- Sidebar filters ----
+# --- SIDEBAR FILTERS ---
 with st.sidebar:
     st.title("🔍 Filters")
     selected_media = st.selectbox("Media Outlet", get_media_names())
@@ -48,7 +47,7 @@ with st.sidebar:
     tones = ["All"] + sorted(df['tone'].dropna().unique())
     selected_tone = st.selectbox("Tone", tones)
 
-# ---- Apply filters ----
+# --- APPLY FILTERS ---
 filtered = df.copy()
 if selected_media != "All":
     filtered = filtered[filtered['media_outlet'] == selected_media]
@@ -61,19 +60,13 @@ if selected_intent != "All":
 if selected_tone != "All":
     filtered = filtered[filtered['tone'] == selected_tone]
 
-# ---- Influence Index ----
+# --- INFLUENCE INDEX ---
 st.title("🌍 Vulnerability Index Tool")
 
 @st.cache_data
 def get_influence_score(actor, country):
-    if not isinstance(CA, dict):
-        return 0.0
-    scores = []
-    for dimension in CA.values():
-        if isinstance(dimension, dict):
-            country_score = dimension.get(actor, {}).get(country, 0)
-            scores.append(country_score)
-    return sum(scores) / len(scores) if scores else 0.0
+    scores = [CA[i].get(actor, {}).get(country, 0) for i in CA]
+    return sum(scores) / len(scores) if scores else 0
 
 if selected_country != "All" and selected_actor != "All":
     avg_score = get_influence_score(selected_actor, selected_country)
@@ -87,9 +80,9 @@ else:
 
 st.write(f"### Showing **{len(filtered)}** of **{len(df)}** articles")
 
-# ---- Pagination ----
+# --- PAGINATION ---
 articles_per_page = 6
-total_pages = max(1, (len(filtered) - 1) // articles_per_page + 1)
+total_pages = (len(filtered) - 1) // articles_per_page + 1
 
 if "page" not in st.session_state:
     st.session_state.page = 0
@@ -108,7 +101,7 @@ start_idx = st.session_state.page * articles_per_page
 end_idx = start_idx + articles_per_page
 page_articles = filtered.iloc[start_idx:end_idx]
 
-# ---- Article cards ----
+# --- ARTICLE CARDS ---
 for _, row in page_articles.iterrows():
     image_url = row.get('urlToImage', None)
     headline = row.get('headline', 'No headline')
@@ -122,23 +115,20 @@ for _, row in page_articles.iterrows():
         if image_url and isinstance(image_url, str):
             st.image(image_url, width=120, caption=media)
         else:
-            st.info("No image")
+            st.info("No featured image found.")
 
     with text_col:
         with st.expander(f"**{headline[:100]}...** (Source: {media} - {posting_time})"):
             st.caption(
-                f"**Target Country**: {row.get('target_country', 'N/A')} | "
-                f"**Foreign Actor**: {row.get('inferred_actor', 'N/A')}"
+                f"**Target Country**: {row['target_country']} | "
+                f"**Foreign Actor**: {row['inferred_actor']}"
             )
             st.write(article_text)
-            
             st.markdown(
-                f"**Tone**: `{row.get('tone', 'N/A')}` | "
-                f"**Strategic Intent**: `{row.get('strategic_intent', 'N/A')}`"
+                f"**Tone**: `{row['tone']}` | "
+                f"**Strategic Intent**: `{row['strategic_intent']}`"
             )
-            
-            url = row.get('URL')
-            if url and isinstance(url, str):
-                st.markdown(f"[🔗 Read full article]({url})")
+            if pd.notna(row.get('URL', None)):
+                st.markdown(f"[🔗 Read full article]({row['URL']})")
     
     st.markdown("---")
