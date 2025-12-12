@@ -12,8 +12,8 @@ from contextual_all_intents_v2 import CA
 
 # --- NEW BACKGROUND AND LOGO ---
 # 1. New, slightly brighter background image
-NEW_BACKGROUND_URL = "https://images.unsplash.com/photo-1518770660439-4630ee79dee7?q=80&w=2070&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D" # A subtle, high-tech circuit board/data image
-# 2. A placeholder for a brighter logo (since the previous was too dark)
+NEW_BACKGROUND_URL = "https://images.unsplash.com/photo-1518770660439-4630ee79dee7?q=80&w=2070&auto=format&fit=crop&ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D" 
+# 2. A placeholder for a brighter logo
 BRIGHT_LOGO_URL = "https://opportunities.codeforafrica.org/wp-content/uploads/sites/5/2023/12/CfA-Logo-White-Green.png" 
 
 
