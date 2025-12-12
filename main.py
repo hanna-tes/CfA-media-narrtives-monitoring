@@ -8,7 +8,7 @@ from contextual_all_intents_v2 import CA  # Your influence scores
 #  PAGE CONFIG
 # ----------------------------------------------------------
 st.set_page_config(
-    page_title="Vulnerability Index Monitoring Dashboard",
+    page_title="Vulnerability Index Tool",
     layout="wide"
 )
 
