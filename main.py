@@ -3,10 +3,76 @@ import pandas as pd
 import plotly.express as px
 import re
 import numpy as np 
+from urllib.parse import urlparse, urljoin
 
-# --- MOCK PLACEHOLDERS FOR EXTERNAL FILES (MUST BE DEFINED FOR CODE TO RUN) ---
+# NOTE: The following libraries are REQUIRED for the real scraping logic provided by the user.
+# If running in a restricted environment (like a code interpreter), these operations will fail.
+try:
+    import requests
+    from bs4 import BeautifulSoup
+except ImportError:
+    st.error("Missing libraries: Please install 'requests' and 'beautifulsoup4' (`pip install requests beautifulsoup4`) to enable image scraping.")
+    requests = None
+    BeautifulSoup = None
 
-# 1. MOCK for contextual_all_intents_v2.py components
+# --- SCRAPER FUNCTIONS (Provided by User) ---
+
+def fetch_og_image(url, timeout=10):
+    """Fetch Open Graph image from article URL."""
+    if not requests or not BeautifulSoup:
+        return None
+    if not url or not isinstance(url, str) or not url.startswith(('http://', 'https://')):
+        return None
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    try:
+        response = requests.get(url, headers=headers, timeout=timeout)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Try og:image first
+        og_image = soup.find('meta', property='og:image')
+        if og_image and og_image.get('content'):
+            img_url = og_image['content']
+            if img_url.startswith('//'):
+                img_url = 'https:' + img_url
+            elif img_safe := og_image.get('content'):
+                img_url = img_safe
+            return img_url
+
+        # Fallback: first <img> in main content
+        main_content = soup.find('article') or soup.find('main') or soup.find('div', class_='content')
+        if main_content:
+            img_tag = main_content.find('img')
+            if img_tag and img_tag.get('src'):
+                img_url = img_tag['src']
+                if img_url.startswith('//'):
+                    img_url = 'https:' + img_url
+                elif img_url.startswith('/'):
+                    img_url = urljoin(url, img_url)
+                return img_url
+
+        # Last resort: any <img>
+        img_tag = soup.find('img')
+        if img_tag and img_tag.get('src'):
+            img_url = img_tag['src']
+            if img_url.startswith('//'):
+                img_url = 'https:' + img_url
+            elif img_url.startswith('/'):
+                img_url = urljoin(url, img_url)
+            return img_url
+
+    except Exception:
+        pass
+    return None
+
+def is_valid_image_url(url):
+    if not url or not isinstance(url, str):
+        return False
+    url_lower = url.lower()
+    blocked = ['logo', 'ad.', 'banner', 'sponsor', 'doubleclick', 'gif', 'svg', 'png?size=', 'taboola', 'youtube', 'favicon', '.ico']
+    return all(word not in url_lower for word in blocked)
+
+# --- MOCK PLACEHOLDERS FOR CONTEXTUAL INFLUENCE MODEL (CA, G, R) ---
 INTENT_FACTORS = {
     'Diplomatic Pressure': {'Economic Dependency': 0.7, 'Security Dependency': 0.3},
     'Economic Coercion': {'Economic Dependency': 0.9, 'Resource Dependence': 0.5},
@@ -15,7 +81,6 @@ INTENT_FACTORS = {
 }
 
 def mock_compute_gs():
-    # Mock 'g' factors (Structural Vulnerability) for a few countries
     return {
         'Senegal': {'Debt Vulnerability': 0.6, 'Military Presence': 0.3, 'Resource Dependence': 0.5, 'Social Fragility': 0.4, 'Media Literacy': 0.5, 'Economic Dependency': 0.7},
         'Ethiopia': {'Debt Vulnerability': 0.9, 'Military Presence': 0.7, 'Resource Dependence': 0.8, 'Social Fragility': 0.9, 'Media Literacy': 0.4, 'Economic Dependency': 0.6},
@@ -23,11 +88,9 @@ def mock_compute_gs():
     }
 
 def mock_compute_R(g):
-    # Mock R-factors (Narrative Amplification)
     actors = ['China', 'Rwanda', 'Turkey', 'Russia']
     countries = list(g.keys())
     R_mock = {}
-    
     for intent in INTENT_FACTORS:
         R_mock[intent] = {}
         for actor in actors:
@@ -37,96 +100,130 @@ def mock_compute_R(g):
     return R_mock
 
 def mock_compute_CAs(g, R):
-    # Mock CA (Contextual Influence Index) - Intent x Actor x Country
     CA_mock = {}
     actors = ['China', 'Rwanda', 'Turkey', 'Russia']
-    
     for intent, factors in INTENT_FACTORS.items():
         CA_mock[intent] = {}
         for actor in actors:
             CA_mock[intent][actor] = {}
             for country, g_factors in g.items():
-                
                 total_weighted_vulnerability = 0
                 max_possible_score = 0
                 r_val = R[intent][actor][country]
-                
                 for factor, weight in factors.items():
                     g_val = g_factors.get(factor, 0)
                     total_weighted_vulnerability += (r_val * g_val * weight)
                     max_possible_score += (1.0 * 1.0 * weight)
-                
                 score = min(total_weighted_vulnerability / (max_possible_score if max_possible_score > 0 else 1.0), 1.0)
                 CA_mock[intent][actor][country] = score
     return CA_mock
 
-# 2. MOCK for data_loader.py components
+g = mock_compute_gs()
+R = mock_compute_R(g)
+CA = mock_compute_CAs(g,R)
+
+# --- DATA LOADER AND ENRICHMENT FUNCTIONS ---
+
 @st.cache_data
 def load_and_transform_data():
     try:
         df = pd.read_csv("Merged_dataset_sample.csv")
     except FileNotFoundError:
-        st.error("Error: 'Merged_dataset_sample.csv' not found. Please ensure the file is in the correct location or uploaded.")
+        st.error("Error: 'Merged_dataset_sample.csv' not found.")
         return pd.DataFrame()
         
     df['posting_time'] = pd.to_datetime(df['posting_time'], errors='coerce')
-    
-    # Ensure all columns required for filtering and display are present
-    required_cols = ['media_outlet', 'inferred_actor', 'strategic_intent', 'tone', 'target_country', 'URL', 'article_text']
+    required_cols = ['media_outlet', 'inferred_actor', 'strategic_intent', 'tone', 'target_country', 'URL', 'article_text', 'urlToImage']
     for col in required_cols:
         if col not in df.columns:
             df[col] = np.nan
             
     return df.dropna(subset=['article_text'])
 
-
-def enrich_with_scraping_and_llm(df_base, progress_callback):
-    # Progress bar simulation
-    for i in range(1, 101):
-        progress_callback(i/100, f"Simulating LLM enrichment: {i}% complete")
-        if i % 25 == 0:
-            pass 
-            
-    df_out = df_base.copy()
-    
-    # --- PLACEHOLDER FOR YOUR EXTERNAL SCRAPING OUTPUT (urlToImage column) ---
-    # This mock function ensures the column exists so the rendering logic works.
-    # IN PRODUCTION, YOUR PIPELINE MUST POPULATE THIS COLUMN BASED ON THE URL.
-    GENERIC_IMAGE_PLACEHOLDER = "https://placehold.co/400x200/4ade80/000000?text=Image+Source+from+URL"
-
-    # Initialize the expected column name
-    df_out['urlToImage'] = GENERIC_IMAGE_PLACEHOLDER 
-    
-    # Randomly set a few to None to test the 'No Image' fallback display logic
-    if len(df_out) > 5:
-        indices_to_set_none = df_out.index[::5]
-        df_out.loc[indices_to_set_none, 'urlToImage'] = None 
-
-    return df_out
-
 def get_media_names(): return ['Rnanews', 'Rfi', 'A News', 'Yeni Şafak']
 def get_countries(): return ['Senegal', 'Ethiopia', 'Nigeria', 'DRC']
 def get_actors(): return ['Rwanda', 'France', 'Turkey', 'China', 'Russia']
 
-# --- END OF MOCK PLACEHOLDERS ---
+def enrich_with_scraping_and_llm(df, progress_callback=None):
+    if 'scraped_data' not in st.session_state:
+        st.session_state.scraped_data = {'url_to_image': {}}
+        
+    scraped_image = st.session_state.scraped_data['url_to_image']
 
-# --- RUN CONTEXTUAL INFLUENCE MODEL ---
-g = mock_compute_gs()
-R = mock_compute_R(g)
-CA = mock_compute_CAs(g,R)
-# --- MODEL RUN COMPLETE ---
+    # Identify URLs needing image scraping
+    # This assumes 'urlToImage' is empty/NaN if scraping hasn't happened.
+    needs_image = df['urlToImage'].isna() & df['URL'].notnull() 
+    urls_to_fetch = df[needs_image]['URL'].dropna().unique()
+
+    if len(urls_to_fetch) > 0:
+        total = len(urls_to_fetch)
+        for i, url in enumerate(urls_to_fetch):
+            if url not in scraped_image:
+                # Scrape real image
+                img_url = fetch_og_image(url)
+                
+                # Validate and fallback to Clearbit logo if needed
+                if not is_valid_image_url(img_url):
+                    try:
+                        domain = urlparse(url).netloc.replace('www.', '', 1)
+                        img_url = f"https://logo.clearbit.com/{domain}"
+                    except:
+                        img_url = None
+                
+                scraped_image[url] = img_url
+
+            if progress_callback:
+                progress_callback(min(1.0, (i + 1) / total), f"Scraping images: {i+1}/{total}...")
+
+        st.session_state.scraped_data['url_to_image'] = scraped_image
+
+    # Map images back to DataFrame
+    df['urlToImage'] = df['URL'].map(scraped_image).fillna(df['urlToImage'])
+    
+    # Final safety net for display
+    df['urlToImage'] = df['urlToImage'].fillna('https://placehold.co/400x200/cccccc/000000?text=No+Image')
+    return df
+
+@st.cache_data
+def create_display_text(df_in):
+    df_out = df_in.copy()
+    
+    def extract_summary_and_headline(text):
+        if not isinstance(text, str) or not text.strip():
+            return 'Summary extraction pending or failed.', 'Article Snippet (No Text)'
+        
+        headline_match = re.search(r'[^.?!]*[.?!]', text)
+        headline = headline_match.group(0).strip() if headline_match else 'Article Snippet'
+        
+        if headline_match:
+            text_after_first = text[headline_match.end():]
+            second_sentence_match = re.search(r'[^.?!]*[.?!]', text_after_first)
+            
+            if second_sentence_match and headline_match.end() + second_sentence_match.end() < 500:
+                summary = headline + " " + second_sentence_match.group(0).strip()
+            else:
+                summary = headline
+        else:
+            summary = text[:200].strip() + '...'
+            
+        return summary, headline
+
+    results = df_out['article_text'].fillna('').apply(lambda x: extract_summary_and_headline(x))
+    df_out['llm_summary'] = [r[0] for r in results]
+    df_out['display_headline'] = [r[1] for r in results]
+    
+    return df_out
 
 
-# --- NEW BACKGROUND AND LOGO ---
+# --- STREAMLIT APP LAYOUT ---
+
 NEW_BACKGROUND_URL = "https://media.istockphoto.com/id/1502033887/vector/beige-gray-grainy-gradient-background-poster-backdrop-noise-texture-webpage-header-wide.jpg?s=612x612&w=0&k=20&c=eGwiA8zZ4cobGeMz5QeRs5zKzlp1Rr-BcROwT4S22y0=" 
 BRIGHT_LOGO_URL = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/main/CFA_Logo.png"
-
 
 # 🎨 Custom CSS for theme-aware dark cards AND READABILITY FIX
 st.markdown(f"""
 <style>
 /* -------------------- THEME AWARE STYLES -------------------- */
-/* Set background image for the app */
 .stApp {{
     background-image: url("{NEW_BACKGROUND_URL}");
     background-size: cover;
@@ -220,49 +317,16 @@ if df_base.empty:
     st.stop()
 
 # Enrich with scraping
-with st.spinner("Enriching articles..."):
+with st.spinner("Enriching articles (Scraping Images)..."):
     progress_bar = st.progress(0)
     status_text = st.empty()
     def progress_callback(p, msg):
         progress_bar.progress(min(p, 1.0))
         status_text.text(msg)
-    # df now includes the 'urlToImage' column created by the mock (simulating your scraper)
+    # df now includes the 'urlToImage' column populated by the scraper
     df = enrich_with_scraping_and_llm(df_base, progress_callback=progress_callback)
 progress_bar.empty()
 status_text.empty()
-
-# --- CRITICAL: Summary Preprocessing Step (Uses LLM or First Sentences) ---
-@st.cache_data
-def create_display_text(df_in):
-    df_out = df_in.copy()
-    
-    def extract_summary_and_headline(text):
-        if not isinstance(text, str) or not text.strip():
-            return 'Summary extraction pending or failed.', 'Article Snippet (No Text)'
-        
-        # 1. Determine the Headline (first sentence)
-        headline_match = re.search(r'[^.?!]*[.?!]', text)
-        headline = headline_match.group(0).strip() if headline_match else 'Article Snippet'
-        
-        # 2. Determine the Summary (first 1-2 sentences)
-        if headline_match:
-            text_after_first = text[headline_match.end():]
-            second_sentence_match = re.search(r'[^.?!]*[.?!]', text_after_first)
-            
-            if second_sentence_match and headline_match.end() + second_sentence_match.end() < 500:
-                summary = headline + " " + second_sentence_match.group(0).strip()
-            else:
-                summary = headline
-        else:
-            summary = text[:200].strip() + '...'
-            
-        return summary, headline
-
-    results = df_out['article_text'].fillna('').apply(lambda x: extract_summary_and_headline(x))
-    df_out['llm_summary'] = [r[0] for r in results]
-    df_out['display_headline'] = [r[1] for r in results]
-    
-    return df_out
 
 df = create_display_text(df)
 
@@ -298,15 +362,12 @@ def get_influence_baseline_score(actor, country, intent):
     if actor == "All" or country == "All" or not CA:
         return 0.0 
         
-    if actor.upper() in ['UAE', 'DRC']:
-        actor_normalized = actor.upper()
-    else:
-        actor_normalized = actor.title()
+    actor_normalized = actor.title()
+    country_normalized = country.title()
     
-    if country.upper() in ['UAE', 'DRC', 'ROC']:
-        country_normalized = country.upper()
-    else:
-        country_normalized = country.title()
+    # Handle acronyms/exceptions
+    if actor.upper() in ['UAE', 'DRC']: actor_normalized = actor.upper()
+    if country.upper() in ['UAE', 'DRC', 'ROC']: country_normalized = country.upper()
     
     if intent != "All":
         score = CA.get(intent, {}).get(actor_normalized, {}).get(country_normalized, 0.0)
@@ -322,7 +383,7 @@ def get_influence_baseline_score(actor, country, intent):
 
 
 # --- 1. KPI Metrics ---
-st.header("📊 Key Performance Indicators")
+st.header("📊 Key Indicators")
 
 # Calculate KPIs
 current_article_count = len(filtered)
@@ -407,40 +468,11 @@ st.markdown("<br>", unsafe_allow_html=True)
 with st.expander("❓ Understanding the Dashboard Metrics (Click to Expand)", expanded=False):
     st.markdown("---")
     
-    # 1. Average Tone Score
-    st.markdown("#### 💬 1. Average Tone Score (Sentiment)")
+    st.markdown("#### 1. Average Tone Score (Sentiment)")
     st.markdown(
         """
         This score measures the overall **journalistic framing and emotional valence** of the filtered articles. 
         It is tuned to your specific set of journalistic tone categories, ranging from **-1.0 (Critically Negative)** to **+1.0 (Highly Positive)**.
-        """
-    )
-
-    st.markdown("##### Score Mapping:")
-    tone_col1, tone_col2, tone_col3, tone_col4 = st.columns(4)
-    
-    with tone_col1:
-        st.success("🔵 **0.0 (Factual/Neutral)**: Objective and Balanced")
-    with tone_col2:
-        st.info("🟠 **-0.3 (Sensationalist)**: Moderately Negative (Exaggeration)")
-    with tone_col3:
-        st.warning("🔴 **-0.8 (Cynical)**: Highly Negative (Distrust)")
-    with tone_col4:
-        st.error("🚨 **-1.0 (Alarmist)**: Critically Negative (Fear/Crisis)")
-    
-    st.markdown("---")
-    
-    # 2. Contextual Influence Index
-    st.markdown("#### 🧠 2. Contextual Influence Index (CII)")
-    
-    st.markdown(
-        """
-        The CII is the dashboard's core measure of **vulnerability** to foreign influence operations, 
-        ranging from **0.00 (No Vulnerability)** to **1.00 (Critical Vulnerability)**.
-
-        It is a composite score calculated by assessing the overlap between a country's pre-existing weaknesses and the narratives currently being pushed by a specific actor.
-        
-        
         """
     )
     
@@ -453,20 +485,9 @@ with st.expander("❓ Understanding the Dashboard Metrics (Click to Expand)", ex
         A high CII means the actor's efforts are landing on highly vulnerable ground.
         """
     )
-    
-    # Add a visual risk scale
-    st.markdown("##### Risk Scale:")
-    risk_col1, risk_col2, risk_col3 = st.columns(3)
-    with risk_col1:
-        st.markdown("### 0.00 - 0.40")
-        st.success("🟢 **LOW RISK**")
-    with risk_col2:
-        st.markdown("### 0.41 - 0.79")
-        st.warning("🟡 **MODERATE RISK**")
-    with risk_col3:
-        st.markdown("### 0.80 - 1.00")
-        st.error("🔴 **CRITICAL RISK**")
+    st.markdown("")
 
+    
 st.markdown("---")
 
 # --- 2. Time-Series Trend Analysis ---
@@ -517,11 +538,9 @@ for _, row in page_articles.iterrows():
     summary_display = str(row.get('llm_summary', 'Summary extraction failed.'))
     headline = str(row.get('display_headline', 'Article Snippet (No Headline)'))
     
-    # This is the line that reads the image URL from the column populated by your scraper
+    # READS the image URL from the 'urlToImage' column (populated by the scraper above)
     image_url = str(row.get('urlToImage', None)) 
     media = str(row.get('media_outlet', 'Unknown'))
-    target_country = str(row.get('target_country', 'N/A'))
-    inferred_actor = str(row.get('inferred_actor', 'N/A'))
     tone = str(row.get('tone', 'N/A'))
     intent = str(row.get('strategic_intent', 'N/A'))
     
