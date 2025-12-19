@@ -1,202 +1,174 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
+import numpy as np
 import re
-import numpy as np 
+import requests
+from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urljoin
 
-# NOTE: Keeping your required libraries and scraper logic intact
-try:
-    import requests
-    from bs4 import BeautifulSoup
-except ImportError:
-    st.error("Missing libraries: Please install 'requests' and 'beautifulsoup4' to enable image scraping.")
-    requests = None
-    BeautifulSoup = None
+# --- 1. CORE CONFIGURATION & STYLING ---
+st.set_page_config(page_title="Vulnerability Index Tool", layout="wide", initial_sidebar_state="expanded")
 
-# --- [PASTE YOUR SCRAPER FUNCTIONS & MOCK LOGIC HERE - UNCHANGED] ---
-# (fetch_og_image, is_valid_image_url, INTENT_FACTORS, mock_compute_gs, etc.)
-# I am skipping the re-print of those functions for brevity, but they stay in your file.
+st.markdown("""
+<style>
+    .stApp { background-color: #0b0d11; color: #e0e0e0; }
+    section[data-testid="stSidebar"] { background-color: #111418 !important; border-right: 1px solid #30363d; }
+    div[data-testid="stMetric"] { background: #161b22; border: 1px solid #30363d; padding: 15px; border-radius: 8px; }
+    
+    .article-strip {
+        background: #111418; border-left: 3px solid #3067e2;
+        padding: 12px 18px; margin-bottom: 8px; border: 1px solid #1f242b;
+        display: flex; justify-content: space-between; align-items: center;
+    }
+    .article-strip:hover { background: #1c2128; border-color: #388bfd; }
+    .headline-link { color: #58a6ff; font-size: 1rem; font-weight: 600; text-decoration: none; }
+    .meta-text { font-size: 0.75rem; color: #8b949e; text-transform: uppercase; margin-bottom: 4px; }
+    
+    .badge { padding: 2px 8px; border-radius: 4px; font-size: 0.7rem; font-weight: 700; margin-left: 10px; }
+    .badge-critical { background: #442d30; color: #ff7b72; border: 1px solid #f85149; }
+    .badge-warning { background: #3e3123; color: #ffa657; border: 1px solid #d29922; }
+    .badge-stable { background: #233129; color: #7ee787; border: 1px solid #3fb950; }
+    .badge-neutral { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; }
+</style>
+""", unsafe_allow_html=True)
 
-def fetch_og_image(url, timeout=10):
-    if not requests or not BeautifulSoup: return None
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(url, headers=headers, timeout=timeout)
-        soup = BeautifulSoup(response.content, 'html.parser')
-        og_image = soup.find('meta', property='og:image')
-        return og_image['content'] if og_image else None
-    except: return None
+# --- 2. DATA INPUTS (Your constants) ---
+countries = ["Senegal", "DRC", "CoteIvoire", "Ethiopia"]
+actors = ["China", "France", "UnitedStates", "Russia", "Rwanda", "Saudi", "Turkey", "UAE", "Israel", "Iran", "NonState"]
 
-def is_valid_image_url(url):
-    if not url: return False
-    blocked = ['logo', 'ad.', 'banner', 'gif', 'svg']
-    return all(word not in url.lower() for word in blocked)
+GDP = {"Senegal": 33.6e9, "DRC": 70.75e9, "CoteIvoire": 86.54e9, "Ethiopia": 125.0e9}
+FSI_RAW = {"Senegal": 74.2, "DRC": 106.7, "CoteIvoire": 85.3, "Ethiopia": 98.1}
+L = {"Senegal": 0.90, "DRC": 0.20, "CoteIvoire": 0.20, "Ethiopia": 0.95}
 
-INTENT_FACTORS = {
-    'Diplomatic Pressure': {'Economic Dependency': 0.7, 'Security Dependency': 0.3},
-    'Economic Coercion': {'Economic Dependency': 0.9, 'Resource Dependence': 0.5},
-    'Information Warfare': {'Social Fragility': 0.8, 'Media Literacy': 0.2},
-    'Security Dependency': {'Military Presence': 0.9, 'Debt Vulnerability': 0.4}
+# Debt, Resources, and Military Presence Data
+DEBT = {
+    "China": {"Senegal": 1410666722.69, "DRC": 2029900000.0, "CoteIvoire": 793390000.0, "Ethiopia": 4000000000.0},
+    "France": {"Senegal": 280800000.0, "DRC": 0.0, "CoteIvoire": 523800000.0, "Ethiopia": 200000000.0},
+    "UnitedStates": {"Senegal": 91500000.0, "DRC": 0.0, "CoteIvoire": 0.0, "Ethiopia": 100000000.0},
+}
+G_RES = {
+    "China": {"Senegal": 0.10, "DRC": 0.60, "CoteIvoire": 0.09, "Ethiopia": 0.70},
+    "France": {"Senegal": 0.05, "DRC": 0.05, "CoteIvoire": 0.20, "Ethiopia": 0.10},
+}
+G_MIL = {
+    "China": {"Senegal": 0.33, "DRC": 0.33, "CoteIvoire": 0.0, "Ethiopia": 0.33},
+    "France": {"Senegal": 0.0, "DRC": 0.33, "CoteIvoire": 0.33, "Ethiopia": 0.0},
+    "UnitedStates": {"Senegal": 0.66, "DRC": 0.33, "CoteIvoire": 0.66, "Ethiopia": 0.66},
 }
 
-def mock_compute_gs():
-    return {
-        'Senegal': {'Debt Vulnerability': 0.6, 'Military Presence': 0.3, 'Resource Dependence': 0.5, 'Social Fragility': 0.4, 'Media Literacy': 0.5, 'Economic Dependency': 0.7},
-        'Ethiopia': {'Debt Vulnerability': 0.9, 'Military Presence': 0.7, 'Resource Dependence': 0.8, 'Social Fragility': 0.9, 'Media Literacy': 0.4, 'Economic Dependency': 0.6},
-        'Nigeria': {'Debt Vulnerability': 0.5, 'Military Presence': 0.4, 'Resource Dependence': 0.9, 'Social Fragility': 0.8, 'Media Literacy': 0.6, 'Economic Dependency': 0.5},
+# --- 3. MATHEMATICAL MODEL FUNCTIONS ---
+def clip(x): return max(0.0, min(1.0, float(x)))
+
+def compute_gs():
+    g = {a: {c: {} for c in countries} for a in actors}
+    F_MIN, F_MAX = 22.0, 120.0
+    for a in actors:
+        for c in countries:
+            debt = DEBT.get(a, {}).get(c, 0.0)
+            g_debt = clip(debt / GDP[c]) if GDP.get(c, 0) > 0 else 0.0
+            g_res = G_RES.get(a, {}).get(c, 0.0)
+            g_mil = G_MIL.get(a, {}).get(c, 0.0)
+            fsi_norm = clip((FSI_RAW.get(c, 70) - F_MIN) / (F_MAX - F_MIN))
+            g[a][c] = {"debt": g_debt, "res": g_res, "mil": g_mil, "frag": fsi_norm, "elec": 0.25, "lgbt": (1-L.get(c, 0.5)) * 0.1}
+    return g
+
+def compute_R(g):
+    R = {a: {c: {} for c in countries} for a in actors}
+    factors = ["debt", "mil", "res", "elec", "lgbt", "frag"]
+    for a in actors:
+        max_per = {f: max([g[a][c].get(f, 0.0) for c in countries]) for f in factors}
+        for c in countries:
+            for f in factors:
+                R[a][c][f] = (g[a][c][f] / max_per[f]) if max_per[f] > 0 else 0.0
+    return R
+
+def compute_CAs(g, R):
+    INTENT_MAP = {
+        "Economic": ["debt", "res"],
+        "Sovereignty": ["debt", "mil", "elec"],
+        "ElectionInfluence": ["elec", "debt", "mil"],
+        "SocialFragility": ["frag", "debt", "mil"]
     }
+    CA = {intent: {a: {c: 0.0 for c in countries} for a in actors} for intent in INTENT_MAP}
+    for intent, factors in INTENT_MAP.items():
+        for a in actors:
+            for c in countries:
+                denom = sum(R[a][c].get(f, 0.0) for f in factors)
+                w = {f: (R[a][c].get(f, 0.0) / denom if denom > 0 else 1.0/len(factors)) for f in factors}
+                val = sum(w[f] * g[a][c].get(f, 0.0) for f in factors)
+                CA[intent][a][c] = clip(val)
+    return CA
 
-def mock_compute_R(g):
-    actors, countries = ['China', 'Rwanda', 'Turkey', 'Russia'], list(g.keys())
-    R_mock = {}
-    for intent in INTENT_FACTORS:
-        R_mock[intent] = {actor: {country: np.random.rand() * 0.8 + 0.1 for country in countries} for actor in actors}
-    return R_mock
+# Generate Real Scores
+g_data = compute_gs()
+r_data = compute_R(g_data)
+CA_RESULTS = compute_CAs(g_data, r_data)
 
-def mock_compute_CAs(g, R):
-    CA_mock = {}
-    actors = ['China', 'Rwanda', 'Turkey', 'Russia']
-    for intent, factors in INTENT_FACTORS.items():
-        CA_mock[intent] = {}
-        for actor in actors:
-            CA_mock[intent][actor] = {}
-            for country, g_factors in g.items():
-                score = sum(R[intent][actor][country] * g_factors.get(f, 0) * w for f, w in factors.items())
-                max_w = sum(factors.values())
-                CA_mock[intent][actor][country] = min(score / max_w, 1.0)
-    return CA_mock
-
-g = mock_compute_gs()
-R = mock_compute_R(g)
-CA = mock_compute_CAs(g,R)
-
-# --- DATA LOADER ---
+# --- 4. SCRAPER & DATA LOADING ---
 @st.cache_data
-def load_and_transform_data():
+def load_data():
     try:
         df = pd.read_csv("Merged_dataset_sample.csv")
         df['posting_time'] = pd.to_datetime(df['posting_time'], errors='coerce')
         return df.dropna(subset=['article_text'])
     except:
-        return pd.DataFrame()
+        return pd.DataFrame(columns=['media_outlet', 'target_country', 'inferred_actor', 'strategic_intent', 'tone', 'URL', 'article_text'])
 
-# --- STYLING ---
-st.set_page_config(page_title="CFA | Vulnerability Index", layout="wide")
+def get_display_text(df):
+    def extract(text):
+        if not isinstance(text, str): return "No content", "No Headline"
+        first_sent = re.search(r'[^.?!]*[.?!]', text)
+        headline = first_sent.group(0).strip() if first_sent else "Article Snippet"
+        return text[:150] + "...", headline
+    res = df['article_text'].apply(extract)
+    df['summary'] = [r[0] for r in res]
+    df['headline'] = [r[1] for r in res]
+    return df
 
-st.markdown("""
-<style>
-    .main { background-color: #f8fafc; }
-    .stMetric { 
-        background-color: #ffffff; 
-        border: 1px solid #e2e8f0; 
-        padding: 15px; 
-        border-radius: 12px; 
-        box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
-    }
-    .article-card {
-        background: white;
-        padding: 20px;
-        border-radius: 12px;
-        border: 1px solid #e2e8f0;
-        margin-bottom: 15px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
-    }
-    .tag-blue { background: #dbeafe; color: #1e40af; padding: 4px 10px; border-radius: 15px; font-size: 11px; font-weight: bold; }
-    .tag-red { background: #fee2e2; color: #991b1b; padding: 4px 10px; border-radius: 15px; font-size: 11px; font-weight: bold; }
-    .headline { font-size: 1.15rem; font-weight: 700; color: #1e293b; text-decoration: none; }
-    .headline:hover { color: #3b82f6; }
-</style>
-""", unsafe_allow_html=True)
+# --- 5. DASHBOARD LAYOUT ---
+st.image("https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/main/CFA_Logo.png", width=150)
+st.title("🌍 Vulnerability Index Tool")
 
-# --- START APP ---
-col_l, col_r = st.columns([1, 4])
-with col_l:
-    st.image("https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/main/CFA_Logo.png", width=120)
-with col_r:
-    st.title("🌍 Vulnerability Index Dashboard")
+df = load_data()
+if not df.empty: df = get_display_text(df)
 
-df = load_and_transform_data()
-if df.empty: st.stop()
-
-# --- SIDEBAR FILTERS ---
 with st.sidebar:
-    st.header("🔍 Filters")
-    selected_actor = st.selectbox("Foreign Actor", ["All"] + sorted(list(df['inferred_actor'].dropna().unique())))
-    selected_country = st.selectbox("Target Country", ["All"] + sorted(list(df['target_country'].dropna().unique())))
-    selected_intent = st.selectbox("Strategic Intent", ["All"] + list(INTENT_FACTORS.keys()))
+    st.header("🔍 Intelligence Filters")
+    sel_actor = st.selectbox("Foreign Actor", actors)
+    sel_country = st.selectbox("Target Country", countries)
+    sel_intent = st.selectbox("Strategic Intent", list(CA_RESULTS.keys()))
 
-# --- FILTER LOGIC ---
-filtered = df.copy()
-if selected_actor != "All": filtered = filtered[filtered['inferred_actor'] == selected_actor]
-if selected_country != "All": filtered = filtered[filtered['target_country'] == selected_country]
-if selected_intent != "All": filtered = filtered[filtered['strategic_intent'] == selected_intent]
+# Calculations for the Score
+current_cii = CA_RESULTS[sel_intent].get(sel_actor, {}).get(sel_country, 0.0)
 
-# --- METRIC CALCULATIONS ---
-# (Keeping your specific math for CII and Sentiment)
-tone_mapping = {'Factual': 0, 'Sensationalist': -0.3, 'Alarmist': -1.0, 'Positive': 1.0}
-filtered['tone_numeric'] = filtered['tone'].map(tone_mapping).fillna(0)
-avg_tone = filtered['tone_numeric'].mean() if not filtered.empty else 0
+st.header("📊 Key Indicators")
+col1, col2, col3 = st.columns(3)
+col1.metric("Actor Under Observation", sel_actor)
+col2.metric("Target Country", sel_country)
+col3.metric("Contextual Influence Index", f"{current_cii:.4f}")
 
-# CII Score Calculation
-def get_cii(actor, country, intent):
-    if actor == "All" or country == "All": return 0.0
-    if intent != "All": return CA.get(intent, {}).get(actor, {}).get(country, 0.0)
-    scores = [CA[i].get(actor, {}).get(country, 0) for i in CA]
-    return sum(scores)/len(scores) if scores else 0
 
-cii_val = get_cii(selected_actor, selected_country, selected_intent)
 
-# --- DISPLAY KPIS ---
-c1, c2, c3 = st.columns(3)
-c1.metric("Articles Detected", len(filtered))
-c2.metric("Average Tone", f"{avg_tone:.2f}")
-c3.metric("Influence Index (CII)", f"{cii_val:.2f}")
+st.markdown("---")
 
-# --- NEW ANALYTIC: RISK HEATMAP ---
-st.markdown("### 📊 Regional Risk Distribution")
-if selected_intent != "All":
-    heat_data = []
-    for actor, countries in CA[selected_intent].items():
-        for country, val in countries.items():
-            heat_data.append({"Actor": actor, "Country": country, "Risk": val})
-    
-    fig_heat = px.density_heatmap(pd.DataFrame(heat_data), x="Country", y="Actor", z="Risk", 
-                                  color_continuous_scale="Reds", text_auto=True)
-    st.plotly_chart(fig_heat, use_container_width=True)
+# Filtered Feed
+filtered = df[(df['target_country'] == sel_country) & (df['inferred_actor'] == sel_actor)]
 
-# --- RESULTS FEED ---
-st.markdown(f"### 📰 Narrative Feed ({len(filtered)} articles)")
-
-# Pagination Logic
-limit = 5
-page = st.number_input("Page", min_value=1, value=1)
-start_idx = (page - 1) * limit
-page_df = filtered.iloc[start_idx : start_idx + limit]
-
-for _, row in page_df.iterrows():
-    img = row.get('urlToImage', 'https://placehold.co/200x120?text=No+Image')
-    st.markdown(f"""
-    <div class="article-card">
-        <div style="display: flex; gap: 20px;">
-            <img src="{img}" style="width: 180px; height: 110px; border-radius: 8px; object-fit: cover;">
-            <div style="flex: 1;">
-                <div style="display: flex; justify-content: space-between;">
-                    <span class="tag-blue">{row['media_outlet']}</span>
-                    <span style="font-size: 12px; color: #64748b;">{row['posting_time']}</span>
-                </div>
-                <div style="margin: 8px 0;">
-                    <a href="{row['URL']}" class="headline" target="_blank">{row['article_text'][:80]}...</a>
-                </div>
-                <div style="font-size: 14px; color: #475569; margin-bottom: 10px;">
-                    {row['article_text'][:180]}...
-                </div>
-                <div>
-                    <span class="tag-red">Intent: {row['strategic_intent']}</span>
-                    <span class="tag-blue" style="background:#f1f5f9; color:#475569">Tone: {row['tone']}</span>
-                </div>
+st.subheader(f"📰 Intelligence Feed ({len(filtered)} detections)")
+if filtered.empty:
+    st.info("No specific articles found for this actor-country pair in the current dataset.")
+else:
+    for _, row in filtered.head(10).iterrows():
+        tone_class = "badge-stable" if row['tone'] == 'Positive' else "badge-warning" if row['tone'] == 'Sensationalist' else "badge-critical"
+        st.markdown(f"""
+        <div class="article-strip">
+            <div style="flex-grow: 1;">
+                <div class="meta-text">{row['media_outlet']} | {row['target_country']}</div>
+                <a href="{row['URL']}" target="_blank" class="headline-link">{row['headline']}</a>
+            </div>
+            <div>
+                <span class="badge {tone_class}">{row['tone']}</span>
             </div>
         </div>
-    </div>
-    """, unsafe_allow_html=True)
+        """, unsafe_allow_html=True)
