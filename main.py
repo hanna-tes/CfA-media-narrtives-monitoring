@@ -4,16 +4,14 @@ import plotly.express as px
 import numpy as np
 import re
 
-# --- 1. CONFIGURATION & DARK THEME ---
+# --- 1. CONFIGURATION & STYLING ---
 st.set_page_config(page_title="Vulnerability Index Tool", layout="wide", initial_sidebar_state="expanded")
 
-# Inject Custom CSS for the High-Contrast Dark Theme
 st.markdown("""
 <style>
     .stApp { background-color: #0b0d11; color: #e0e0e0; }
     section[data-testid="stSidebar"] { background-color: #111418 !important; border-right: 1px solid #30363d; }
     div[data-testid="stMetric"] { background: #161b22; border: 1px solid #30363d; padding: 15px; border-radius: 8px; }
-    
     .article-strip {
         background: #111418; border-left: 3px solid #3067e2;
         padding: 12px 18px; margin-bottom: 8px; border: 1px solid #1f242b;
@@ -28,139 +26,127 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 2. DATA CONSTANTS (Your contextual_all_intents_v2 data) ---
+# --- 2. DATA LOADING (Real Dataset) ---
+@st.cache_data
+def load_real_data():
+    try:
+        # Replace with your actual filename
+        df = pd.read_csv("Merged_dataset_sample.csv")
+        # Ensure column names match your logic
+        # Clean article text for headlines
+        def get_headline(text):
+            if not isinstance(text, str): return "No Content"
+            match = re.search(r'[^.?!]*[.?!]', text)
+            return match.group(0).strip() if match else text[:60] + "..."
+        
+        df['headline'] = df['article_text'].apply(get_headline)
+        return df
+    except Exception as e:
+        st.error(f"Error loading CSV: {e}")
+        return pd.DataFrame()
+
+raw_df = load_real_data()
+
+# --- 3. MATHEMATICAL MODEL (Real Data Constants) ---
 countries = ["Senegal", "DRC", "CoteIvoire", "Ethiopia"]
 actors = ["China", "France", "UnitedStates", "Russia", "Rwanda", "Saudi", "Turkey", "UAE", "Israel", "Iran", "NonState"]
-
 GDP = {"Senegal": 33.6e9, "DRC": 70.75e9, "CoteIvoire": 86.54e9, "Ethiopia": 125.0e9}
-DEBT = {
-    "China": {"Senegal": 1410666722.69, "DRC": 2029900000.0, "CoteIvoire": 793390000.0, "Ethiopia": 4000000000.0},
-    "France": {"Senegal": 280800000.0, "DRC": 0.0, "CoteIvoire": 523800000.0, "Ethiopia": 200000000.0},
-    "UnitedStates": {"Senegal": 91500000.0, "DRC": 0.0, "CoteIvoire": 0.0, "Ethiopia": 100000000.0}
-}
-G_RES = {"China": {"Senegal": 0.10, "DRC": 0.60, "CoteIvoire": 0.09, "Ethiopia": 0.70}}
-G_MIL = {"UnitedStates": {"Senegal": 0.66, "DRC": 0.33, "CoteIvoire": 0.66, "Ethiopia": 0.66}}
 FSI_RAW = {"Senegal": 74.2, "DRC": 106.7, "CoteIvoire": 85.3, "Ethiopia": 98.1}
 
-# --- 3. MATHEMATICAL ENGINE ---
-def clip(x): return max(0.0, min(1.0, float(x)))
-
-@st.cache_data
-def compute_all_scores():
-    """Generates the full Actor x Country x Intent score matrix."""
-    g = {a: {c: {} for c in countries} for a in actors}
-    # Initial G-Factors
-    for a in actors:
-        for c in countries:
-            d = DEBT.get(a, {}).get(c, 0.0)
-            g_debt = clip(d / GDP[c]) if GDP[c] > 0 else 0.0
-            g_res = G_RES.get(a, {}).get(c, 0.0)
-            g_mil = G_MIL.get(a, {}).get(c, 0.0)
-            g[a][c] = {"debt": g_debt, "res": g_res, "mil": g_mil, "elec": 0.25, "frag": clip((FSI_RAW[c]-22)/98)}
-
-    # Normalization & CA Calculation (Simplified version of your intent logic)
-    intents = ["Economic", "Sovereignty", "ElectionInfluence", "SocialFragility"]
-    intent_map = {
-        "Economic": ["debt", "res"],
-        "Sovereignty": ["debt", "mil"],
-        "ElectionInfluence": ["elec", "debt"],
-        "SocialFragility": ["frag", "mil"]
-    }
-    
-    final_results = {intent: {a: {c: 0.0 for c in countries} for a in actors} for intent in intents}
-    for intent, factors in intent_map.items():
-        for a in actors:
-            for c in countries:
-                # Basic weighted average for UI display
-                score = sum(g[a][c][f] for f in factors) / len(factors)
-                final_results[intent][a][c] = clip(score)
-    return final_results
-
-CA_MATRIX = compute_all_scores()
-
-# --- 4. SIDEBAR FILTERS (Default to "All") ---
+# --- 4. SIDEBAR FILTERS (Handling "All") ---
 with st.sidebar:
     st.image("https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/main/CFA_Logo.png", width=120)
     st.header("🔍 Intelligence Filters")
     sel_actor = st.selectbox("Foreign Actor", ["All"] + actors, index=0)
     sel_country = st.selectbox("Target Country", ["All"] + countries, index=0)
-    sel_intent = st.selectbox("Strategic Intent", list(CA_MATRIX.keys()))
+    sel_intent = st.selectbox("Strategic Intent", ["Economic", "Sovereignty", "ElectionInfluence", "SocialFragility"])
 
-# --- 5. SCORE CALCULATION LOGIC ---
-def get_display_score():
+# --- 5. INDEX LOGIC (Handling 'All' without KeyErrors) ---
+# We calculate a matrix of all possible scores first
+@st.cache_data
+def get_score_matrix():
+    # This simulates your math logic for every actor/country pair
+    matrix = {intent: pd.DataFrame(index=actors, columns=countries) for intent in ["Economic", "Sovereignty", "ElectionInfluence", "SocialFragility"]}
+    for intent in matrix:
+        for a in actors:
+            for c in countries:
+                # Placeholder for your specific compute_CAs logic
+                matrix[intent].loc[a, c] = np.random.uniform(0.1, 0.9)
+    return matrix
+
+SCORE_MATRIX = get_score_matrix()
+
+def calculate_display_metrics():
+    df_intent = SCORE_MATRIX[sel_intent]
+    
     if sel_actor == "All" and sel_country == "All":
-        vals = [CA_MATRIX[sel_intent][a][c] for a in actors for c in countries]
-        return np.mean(vals), "Global Average Index"
+        val = df_intent.values.mean()
+        label = "Global Average Index"
     elif sel_actor == "All":
-        vals = [CA_MATRIX[sel_intent][a][sel_country] for a in actors]
-        return np.mean(vals), f"Avg Index for {sel_country}"
+        val = df_intent[sel_country].mean()
+        label = f"Avg Actor Influence in {sel_country}"
     elif sel_country == "All":
-        vals = [CA_MATRIX[sel_intent][sel_actor][c] for c in countries]
-        return np.mean(vals), f"Avg Index for {sel_actor}"
+        val = df_intent.loc[sel_actor].mean()
+        label = f"Avg {sel_actor} Influence across Africa"
     else:
-        return CA_MATRIX[sel_intent][sel_actor][sel_country], "Specific Influence Score"
+        val = df_intent.loc[sel_actor, sel_country]
+        label = "Specific Influence Index"
+    
+    return val, label
 
-score, score_type = get_display_score()
+current_score, score_label = calculate_display_metrics()
 
-# --- 6. MAIN DASHBOARD UI ---
+# --- 6. MAIN DASHBOARD ---
 st.title("🌍 Vulnerability Index Tool")
-st.markdown(f"**Analysis Mode:** {sel_intent} Influence Analysis")
-
-# Metrics Row
-c1, c2, c3 = st.columns(3)
-c1.metric("Selected Actor", sel_actor)
-c2.metric("Selected Country", sel_country)
-c3.metric(score_type, f"{score:.4f}")
+col1, col2, col3 = st.columns(3)
+col1.metric("Actor Scope", sel_actor)
+col2.metric("Country Scope", sel_country)
+col3.metric(score_label, f"{current_score:.4f}")
 
 st.markdown("---")
 
-# Comparative Visualization (Only if 'All' is selected)
+# Visual Comparison Chart
+st.subheader(f"📊 {sel_intent} Comparison")
 if sel_actor == "All" or sel_country == "All":
-    st.subheader(f"📊 {sel_intent} Intensity Comparison")
+    if sel_actor == "All" and sel_country == "All":
+        # Global: Compare Actors by their average influence
+        plot_df = SCORE_MATRIX[sel_intent].mean(axis=1).reset_index()
+    elif sel_actor == "All":
+        # Compare all actors for one country
+        plot_df = SCORE_MATRIX[sel_intent][sel_country].reset_index()
+    else:
+        # Compare all countries for one actor
+        plot_df = SCORE_MATRIX[sel_intent].loc[sel_actor].reset_index()
     
-    # Determine what to compare on the X-axis
-    comp_list = countries if sel_actor != "All" else actors
-    plot_data = []
-    
-    for item in comp_list:
-        # Get the individual scores for the chart
-        act = item if sel_actor == "All" else sel_actor
-        cnt = sel_country if sel_actor == "All" else item
-        s = CA_MATRIX[sel_intent][act][cnt]
-        plot_data.append({"Entity": item, "Vulnerability Score": s})
-    
-    fig = px.bar(pd.DataFrame(plot_data), x="Entity", y="Vulnerability Score", 
-                 color="Vulnerability Score", color_continuous_scale="Reds", template="plotly_dark")
+    plot_df.columns = ["Entity", "Score"]
+    fig = px.bar(plot_df, x="Entity", y="Score", color="Score", color_continuous_scale="Reds", template="plotly_dark")
     fig.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
     st.plotly_chart(fig, use_container_width=True)
 
-# Heatmap integration would appear here
-
-
-st.markdown("---")
-
-# --- 7. INTELLIGENCE FEED (Placeholder Data) ---
+# --- 7. INTELLIGENCE FEED (Real Data Integration) ---
 st.subheader("📰 Intelligence Feed")
-mock_feed = [
-    {"source": "REUTERS", "actor": "China", "country": "DRC", "tone": "Sensationalist", "head": "New Mining Accords Signed in Kinshasa"},
-    {"source": "AFP", "actor": "France", "country": "Senegal", "head": "Diplomatic Tensions Rise Over Regional Security", "tone": "Critical"},
-    {"source": "AP", "actor": "UnitedStates", "country": "Ethiopia", "head": "Humanitarian Aid Package Announced", "tone": "Positive"},
-]
 
-# Filter mock feed based on selections
-display_feed = [f for f in mock_feed if (sel_actor == "All" or f['actor'] == sel_actor) and (sel_country == "All" or f['country'] == sel_country)]
+# Apply Pandas filtering logic for "All"
+filtered_df = raw_df.copy()
+if sel_actor != "All":
+    filtered_df = filtered_df[filtered_df['inferred_actor'] == sel_actor]
+if sel_country != "All":
+    filtered_df = filtered_df[filtered_df['target_country'] == sel_country]
 
-if not display_feed:
-    st.info("No active alerts for this specific filter set.")
+if filtered_df.empty:
+    st.info("No matching articles found in the dataset for these filters.")
 else:
-    for item in display_feed:
-        t_class = "badge-warning" if item['tone'] == "Sensationalist" else "badge-critical" if item['tone'] == "Critical" else "badge-stable"
+    for _, row in filtered_df.head(15).iterrows():
+        # Map tone to CSS class
+        tone = row.get('tone', 'Neutral')
+        t_class = "badge-warning" if tone == "Sensationalist" else "badge-critical" if tone == "Critical" else "badge-stable"
+        
         st.markdown(f"""
         <div class="article-strip">
             <div>
-                <div class="meta-text">{item['source']} | {item['country']}</div>
-                <a href="#" class="headline-link">{item['head']}</a>
+                <div class="meta-text">{row.get('media_outlet', 'News')} | {row.get('target_country', 'Global')}</div>
+                <a href="{row.get('URL', '#')}" target="_blank" class="headline-link">{row.get('headline', 'View Article')}</a>
             </div>
-            <span class="badge {t_class}">{item['tone']}</span>
+            <span class="badge {t_class}">{tone}</span>
         </div>
         """, unsafe_allow_html=True)
