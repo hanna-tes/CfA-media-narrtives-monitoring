@@ -447,11 +447,12 @@ def compute_CAs(g, R):
     return CA
 
 @st.cache_resource
-def _precompute_vulnerability_system():
+def get_vulnerability_system():
+    """Compute or return cached vulnerability scores (CA matrix)."""
     g = compute_gs()
     R = compute_R(g)
     CA = compute_CAs(g, R)
     return CA
 
 # Public exports for main.py
-VULNERABILITY_CA = _precompute_vulnerability_system()
+#VULNERABILITY_CA = _precompute_vulnerability_system()
