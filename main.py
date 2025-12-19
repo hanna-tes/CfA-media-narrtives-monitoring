@@ -55,19 +55,47 @@ ACTOR_UI_NAME = {v: k for k, v in ACTOR_MAP.items() if k != v}
 ACTOR_UI_NAME.update({a: a for a in VULN_ACTORS})  # fallback
 
 # ------------------ INTENT UI LABELING ------------------
-INTENT_UI_MAP = {
-    "Economic": "Economic Coercion",
-    "Sovereignty": "Diplomatic Pressure",
-    "SocialFragility": "Information Warfare",
-    "ElectionInfluence": "Election Influence",
-    "MilitaryPresence": "Military Presence",
-    "ResourceDependency": "Resource Dependency",
-    "LGBTQ": "LGBTQ Framing",
-    "Religious": "Religious Polarization"
+# ------------------ STRATEGIC INTENT MAPPING (aligned with dataset) ------------------
+STRATEGIC_INTENT_MAPPING = {
+    "Economic": {
+        "ui_label": "Economic Coercion",
+        "dataset_values": ["Economic Dependency", "Economic Impact"]
+    },
+    "Sovereignty": {
+        "ui_label": "Sovereignty Erosion",
+        "dataset_values": ["Sovereignty Erosion", "Diplomatic Influence"]
+    },
+    "LGBTQ": {
+        "ui_label": "LGBTQI+ Rights Intervention",
+        "dataset_values": ["LGBTQI+ Rights Intervention"]
+    },
+    "Religious": {
+        "ui_label": "Religious Polarisation",
+        "dataset_values": ["Religious Polarisation"]
+    },
+    "ResourceDependency": {
+        "ui_label": "Resource Control",
+        "dataset_values": ["Resource Control"]
+    },
+    "SocialFragility": {
+        "ui_label": "Information Warfare",
+        "dataset_values": ["Information Warfare"]
+    },
+    "ElectionInfluence": {
+        "ui_label": "Election Interference",
+        "dataset_values": []
+    },
+    "MilitaryPresence": {
+        "ui_label": "Military Presence",
+        "dataset_values": []
+    }
 }
-INTENT_INTERNAL_MAP = {v: k for k, v in INTENT_UI_MAP.items()}
 
-UI_INTENTS = ["All"] + list(INTENT_UI_MAP.values())
+# Generate UI options (only show intents that exist in your data)
+UI_INTENT_OPTIONS = ["All"] + [
+    info["ui_label"] for info in STRATEGIC_INTENT_MAPPING.values()
+    if info["dataset_values"]
+]
 
 def get_influence_baseline_score(actor, country, intent_key):
     # Get the CA system via cached function (not global var)
@@ -228,12 +256,21 @@ with st.sidebar:
     selected_media = st.selectbox("Media Outlet", ["All"] + get_media_names())
     selected_country = st.selectbox("Target Country", ["All"] + get_countries())
     selected_actor = st.selectbox("Foreign Actor", ["All"] + get_actors())
-    selected_intent_ui = st.selectbox("Strategic Intent", UI_INTENTS)
+    selected_intent_ui = st.selectbox("Strategic Intent", UI_INTENT_OPTIONS)
     tones = ["All"] + sorted(df['tone'].dropna().unique().tolist())
     selected_tone = st.selectbox("Tone", tones)
 
 # Map UI intent back to internal key
-intent_key = "All" if selected_intent_ui == "All" else INTENT_INTERNAL_MAP[selected_intent_ui]
+# Resolve selected intent → vulnerability key + dataset values
+selected_vuln_key = None
+allowed_dataset_values = []
+
+if selected_intent_ui != "All":
+    for key, info in STRATEGIC_INTENT_MAPPING.items():
+        if info["ui_label"] == selected_intent_ui:
+            selected_vuln_key = key
+            allowed_dataset_values = info["dataset_values"]
+            break
 
 # ------------------ APPLY FILTERS ------------------
 filtered = df.copy()
@@ -243,9 +280,11 @@ if selected_country != "All":
     filtered = filtered[filtered['target_country'] == selected_country]
 if selected_actor != "All":
     filtered = filtered[filtered['inferred_actor'] == selected_actor]
-if intent_key != "All":
-    # Optional: filter articles by strategic_intent if your data has it
-    pass
+if selected_intent_ui != "All" and allowed_dataset_values:
+    allowed_lower = [v.lower() for v in allowed_dataset_values]
+    filtered = filtered[
+        filtered['strategic_intent'].astype(str).str.lower().isin(allowed_lower)
+    ]
 if selected_tone != "All":
     filtered = filtered[filtered['tone'] == selected_tone]
 
@@ -261,8 +300,11 @@ current_tone_score = filtered['tone_numeric'].mean() if not filtered.empty else 
 baseline_influence_score = 0.0
 final_influence_score = 0.0
 if selected_actor != "All" and selected_country != "All":
-    baseline_influence_score = get_influence_baseline_score(selected_actor, selected_country, intent_key)
-    
+    if selected_vuln_key:
+        baseline_influence_score = get_influence_baseline_score(selected_actor, selected_country, selected_vuln_key)
+    else:
+        baseline_influence_score = get_influence_baseline_score(selected_actor, selected_country, "All")
+        
     # Dynamic modulation
     volume_factor = min(1.0, len(filtered) / 100)
     tone_factor = 1.0 - (current_tone_score / 2.0)
