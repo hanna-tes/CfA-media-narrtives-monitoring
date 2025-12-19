@@ -70,18 +70,20 @@ INTENT_INTERNAL_MAP = {v: k for k, v in INTENT_UI_MAP.items()}
 UI_INTENTS = ["All"] + list(INTENT_UI_MAP.values())
 
 def get_influence_baseline_score(actor, country, intent_key):
-    CA = get_vulnerability_system()
+    # Get the CA system via cached function (not global var)
+    CA = get_vulnerability_system()  # ← this is the fix!
+    
     a_norm = ACTOR_MAP.get(actor, actor)
     c_norm = COUNTRY_MAP.get(country, country)
 
     if intent_key == "All":
         scores = []
-        for i in VULNERABILITY_CA:
-            if a_norm in VULNERABILITY_CA[i] and c_norm in VULNERABILITY_CA[i][a_norm]:
-                scores.append(VULNERABILITY_CA[i][a_norm][c_norm])
+        for i in CA:  # ← now uses local `CA`, not global `VULNERABILITY_CA`
+            if a_norm in CA[i] and c_norm in CA[i][a_norm]:
+                scores.append(CA[i][a_norm][c_norm])
         return sum(scores) / len(scores) if scores else 0.0
     else:
-        return VULNERABILITY_CA.get(intent_key, {}).get(a_norm, {}).get(c_norm, 0.0)
+        return CA.get(intent_key, {}).get(a_norm, {}).get(c_norm, 0.0)
 
 # ------------------ THEME & LOGO ------------------
 NEW_BACKGROUND_URL = "https://media.istockphoto.com/id/1502033887/vector/beige-gray-grainy-gradient-background-poster-backdrop-noise-texture-webpage-header-wide.jpg?s=612x612&w=0&k=20&c=eGwiA8zZ4cobGeMz5QeRs5zKzlp1Rr-BcROwT4S22y0="
@@ -315,7 +317,7 @@ if selected_actor != "All" and selected_country != "All":
         st.warning(f"⚠️ **Elevated Risk**: Contextual vulnerability is high (**{final_influence_score:.2f}**). Monitor closely.")
 
 # ------------------ SCORE EXPLANATION (NEW SECTION) ------------------
-with st.expander("📘 What Do These Scores Mean?", expanded=True):
+with st.expander("📘 What Do These Scores Mean?", expanded=False):
     st.markdown("""
     ### 🔹 **Contextual Vulnerability Index (CVI)**
     A **0.0–1.0** score that combines:
