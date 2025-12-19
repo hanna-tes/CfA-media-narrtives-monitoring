@@ -6,6 +6,7 @@ import numpy as np
 from urllib.parse import urlparse
 import re
 from math import isfinite
+from data_loader import get_vulnerability_system
 
 # Import everything from data_loader (ensure it includes the vulnerability logic)
 from data_loader import (
@@ -15,12 +16,11 @@ from data_loader import (
     get_countries,
     get_actors,
     KEYWORD_LABELS,
-    VULNERABILITY_CA,
-    compute_gs,
+    get_vulnerability_system,  # ✅ Keep this (new)
+    compute_gs,                # ✅ Keep (used for radar chart)
     COUNTRIES as VULN_COUNTRIES,
     ACTORS as VULN_ACTORS
 )
-
 # ------------------ NAME MAPPING FOR UI/DATA ALIGNMENT ------------------
 ACTOR_MAP = {
     "France": "France",
@@ -70,6 +70,7 @@ INTENT_INTERNAL_MAP = {v: k for k, v in INTENT_UI_MAP.items()}
 UI_INTENTS = ["All"] + list(INTENT_UI_MAP.values())
 
 def get_influence_baseline_score(actor, country, intent_key):
+    CA = get_vulnerability_system()
     a_norm = ACTOR_MAP.get(actor, actor)
     c_norm = COUNTRY_MAP.get(country, country)
 
