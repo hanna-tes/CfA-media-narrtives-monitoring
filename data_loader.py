@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 from urllib.parse import urlparse, urljoin
 import time
 import random
+import re
 from math import isfinite
 
 # ==================== LLM CLIENT ====================
@@ -109,6 +110,9 @@ def load_raw_data():
         for col in required_cols:
             if col not in df.columns:
                 df[col] = None
+        # Ensure generated_summary column exists
+        if 'generated_summary' not in df.columns:
+            df['generated_summary'] = None
         df['posting_time'] = (
             pd.to_datetime(df['posting_time'], format="%Y-%m-%d %H:%M:%S", errors='coerce')
             .fillna(pd.to_datetime(df['posting_time'], format="%d/%m/%Y %H:%M", errors='coerce'))
@@ -144,79 +148,65 @@ def summarize_with_llama(text):
 
 def enrich_with_scraping_and_llm(df, progress_callback=None):
     if 'scraped_data' not in st.session_state:
-        st.session_state.scraped_data = {}
-    if 'url_to_text' not in st.session_state.scraped_data:
-        st.session_state.scraped_data['url_to_text'] = {}
-    if 'url_to_image' not in st.session_state.scraped_data:
-        st.session_state.scraped_data['url_to_image'] = {}
-    if 'url_to_summary' not in st.session_state.scraped_data:
-        st.session_state.scraped_data['url_to_summary'] = {}
-        
+        st.session_state.scraped_data = {
+            'url_to_text': {},
+            'url_to_image': {},
+            'url_to_summary': {}
+        }
+    
     scraped_content = st.session_state.scraped_data['url_to_text']
     scraped_image = st.session_state.scraped_data['url_to_image']
     scraped_summary = st.session_state.scraped_data['url_to_summary']
 
-    needs_content = df['scraped_content'].isnull() | (df['scraped_content'] == '')
-    needs_image = ~df['urlToImage'].notna()
-    needs_any = (needs_content | needs_image) & df['URL'].notnull()
-    urls_to_fetch = df[needs_any]['URL'].dropna().unique()
-
-    if len(urls_to_fetch) == 0:
-        df['scraped_content'] = df['URL'].map(scraped_content).fillna(df['scraped_content'])
-        df['article_text'] = df['URL'].map(scraped_summary).fillna(df['article_text'])
-        df['urlToImage'] = df['URL'].map(scraped_image).fillna(df['urlToImage'])
-        return df
+    # Identify URLs that need processing
+    valid_urls = df['URL'].notna() & df['URL'].astype(str).str.startswith(('http://', 'https://'))
+    urls_to_fetch = df[valid_urls]['URL'].dropna().unique()
 
     total = len(urls_to_fetch)
     for i, url in enumerate(urls_to_fetch):
+        # 1. Scrape raw content
         if url not in scraped_content:
             content = fetch_content_with_retry(url, "snippet")
-            scraped_content[url] = content
+            scraped_content[url] = content or "No meaningful content found."
         else:
             content = scraped_content[url]
 
+        # 2. Generate summary (LLM + fallback)
         if url not in scraped_summary:
-            summary = summarize_with_llama(content)
-            if summary == "LLM summarization failed.":
-                if content and content != "No meaningful content found.":
-                    sentences = content.split('.')
-                    fallback_summary_parts = [s.strip() for s in sentences if s.strip()]
-                    first_sentence = fallback_summary_parts[0] + "." if fallback_summary_parts else ""
-                    if len(first_sentence) > 50: 
-                        summary = first_sentence
+            summary = "No summary available."
+            if content and "No meaningful content" not in content and len(str(content)) > 50:
+                summary = summarize_with_llama(content)
+                if "LLM summarization failed" in summary:
+                    # Fallback: extract first 1-2 clean sentences
+                    sentences = re.split(r'[.!?]+', str(content))
+                    clean_sents = [s.strip() for s in sentences if len(s.strip()) > 10]
+                    if len(clean_sents) >= 2:
+                        summary = clean_sents[0] + ". " + clean_sents[1] + "."
+                    elif len(clean_sents) == 1:
+                        summary = clean_sents[0] + "."
                     else:
-                        robust_summary = '. '.join(fallback_summary_parts[:3]) + "."
-                        if len(robust_summary) > 50:
-                            summary = robust_summary
-                        else:
-                            summary = content if len(content) > 50 else "No detailed summary available, but article content found."
-                else:
-                    summary = "No summary available."
+                        summary = content[:200].strip() + "..."
             scraped_summary[url] = summary
-        
+
+        # 3. Fetch image
         if url not in scraped_image:
             img_url = fetch_content_with_retry(url, "image")
             if not is_valid_image_url(img_url):
                 try:
                     domain = urlparse(url).netloc.replace('www.', '')
-                    img_url = f"https://logo.clearbit.com/{domain}"
+                    img_url = f"https://logo.clearbit.com/{domain}"  # ✅ No trailing space!
                 except Exception:
                     img_url = 'https://placehold.co/400x200/cccccc/000000?text=No+Image'
             scraped_image[url] = img_url
 
         if progress_callback:
-            progress_callback((i + 1) / total, f"Enriching {i+1}/{total}...")
+            progress_callback((i + 1) / total, f"Processing {i+1}/{total}...")
 
-    st.session_state.scraped_data['url_to_text'] = scraped_content
-    st.session_state.scraped_data['url_to_image'] = scraped_image
-    st.session_state.scraped_data['url_to_summary'] = scraped_summary
-
+    # ✅ KEY FIX: Use NEW COLUMN for summaries
+    df['generated_summary'] = df['URL'].map(scraped_summary).fillna("No summary available.")
     df['scraped_content'] = df['URL'].map(scraped_content).fillna(df['scraped_content'])
-    df['article_text'] = df['URL'].map(scraped_summary).fillna(df['article_text'])
-    df['urlToImage'] = df['URL'].map(scraped_image).fillna(df['urlToImage'])
+    df['urlToImage'] = df['URL'].map(scraped_image).fillna('https://placehold.co/400x200/cccccc/000000?text=No+Image')
 
-    df['article_text'].fillna("No summary available.", inplace=True)
-    df['urlToImage'].fillna('https://placehold.co/400x200/cccccc/000000?text=No+Image', inplace=True)
     return df
 
 @st.cache_data(ttl=86400)
@@ -228,6 +218,8 @@ def load_and_transform_data():
         df['article_text'] = None
     if 'urlToImage' not in df.columns:
         df['urlToImage'] = None
+    if 'generated_summary' not in df.columns:
+        df['generated_summary'] = None
     df = assign_labels_and_scores(df)
     return df
 
@@ -247,106 +239,101 @@ def get_actors():
     return sorted(df['inferred_actor'].dropna().unique().tolist())
 
 # ==================== CONTEXTUAL VULNERABILITY SCORING ====================
-# Based on contextual_all_intents_v2.py
-
 COUNTRIES = ["Senegal", "DRC", "CoteIvoire", "Ethiopia"]
 ACTORS = ["China", "France", "UnitedStates", "Russia", "Rwanda", "Saudi", "Turkey", "UAE", "Israel", "Iran", "NonState"]
 
 GDP = {
-    "Senegal": 33.6e9,
-    "DRC": 70.75e9,
-    "CoteIvoire": 86.54e9,
-    "Ethiopia": 125.0e9
+    "Senegal": 33.6e9, "DRC": 70.75e9, "CoteIvoire": 86.54e9, "Ethiopia": 125.0e9
 }
 
 DEBT = {
-    "China": {"Senegal": 1410666722.69, "DRC": 2029900000.0, "CoteIvoire": 793390000.0, "Ethiopia": 4000000000.0},
-    "France": {"Senegal": 280800000.0, "DRC": 0.0, "CoteIvoire": 523800000.0, "Ethiopia": 200000000.0},
-    "UnitedStates": {"Senegal": 91500000.0, "DRC": 0.0, "CoteIvoire": 0.0, "Ethiopia": 100000000.0},
-    "Russia": {"Senegal": 0.0, "DRC": 0.0, "CoteIvoire": 0.0, "Ethiopia": 50000000.0},
-    "Rwanda": {"Senegal": 0.0, "DRC": 0.0, "CoteIvoire": 0.0, "Ethiopia": 0.0},
-    "Saudi": {"Senegal": 110000000.0, "DRC": 0.0, "CoteIvoire": 0.0, "Ethiopia": 50000000.0},
-    "UAE": {"Senegal": 65600000.0, "DRC": 0.0, "CoteIvoire": 0.0, "Ethiopia": 100000000.0},
-    "Turkey": {"Senegal": 0.0, "DRC": 0.0, "CoteIvoire": 0.0, "Ethiopia": 200000000.0},
-    "Israel": {"Senegal": 0.0, "DRC": 0.0, "CoteIvoire": 0.0, "Ethiopia": 50000000.0},
-    "Iran": {"Senegal": 0.0, "DRC": 0.0, "CoteIvoire": 0.0, "Ethiopia": 100000000.0},
-    "NonState": {"Senegal": 0.0, "DRC": 0.0, "CoteIvoire": 0.0, "Ethiopia": 0.0},
+    "China": {"Senegal":1410666722.69, "DRC":2029900000.0, "CoteIvoire":793390000.0, "Ethiopia":4000000000.0},
+    "France": {"Senegal":280800000.0, "DRC":0.0, "CoteIvoire":523800000.0, "Ethiopia":200000000.0},
+    "UnitedStates": {"Senegal":91500000.0, "DRC":0.0, "CoteIvoire":0.0, "Ethiopia":100000000.0},
+    "Russia": {"Senegal":0.0, "DRC":0.0, "CoteIvoire":0.0, "Ethiopia":50000000.0},
+    "Rwanda": {"Senegal":0.0, "DRC":0.0, "CoteIvoire":0.0, "Ethiopia":0.0},
+    "Saudi": {"Senegal":110000000.0, "DRC":0.0, "CoteIvoire":0.0, "Ethiopia":50000000.0},
+    "UAE": {"Senegal":65600000.0, "DRC":0.0, "CoteIvoire":0.0, "Ethiopia":100000000.0},
+    "Turkey": {"Senegal":0.0, "DRC":0.0, "CoteIvoire":0.0, "Ethiopia":200000000.0},
+    "Israel": {"Senegal":0.0, "DRC":0.0, "CoteIvoire":0.0, "Ethiopia":50000000.0},
+    "Iran": {"Senegal":0.0, "DRC":0.0, "CoteIvoire":0.0, "Ethiopia":100000000.0},
+    "NonState": {"Senegal":0.0, "DRC":0.0, "CoteIvoire":0.0, "Ethiopia":0.0},
 }
 
 G_RES = {
-    "China": {"Senegal": 0.10, "DRC": 0.60, "CoteIvoire": 0.09, "Ethiopia": 0.70},
-    "France": {"Senegal": 0.05, "DRC": 0.05, "CoteIvoire": 0.20, "Ethiopia": 0.10},
-    "UnitedStates": {"Senegal": 0.40, "DRC": 0.05, "CoteIvoire": 0.0, "Ethiopia": 0.15},
-    "Russia": {"Senegal": 0.0, "DRC": 0.10, "CoteIvoire": 0.0, "Ethiopia": 0.10},
-    "NonState": {"Senegal": 0.05, "DRC": 0.05, "CoteIvoire": 0.05, "Ethiopia": 0.05},
-    "Saudi": {"Senegal": 0.0, "DRC": 0.0, "CoteIvoire": 0.0, "Ethiopia": 0.20},
-    "UAE": {"Senegal": 0.0, "DRC": 0.0, "CoteIvoire": 0.0, "Ethiopia": 0.50},
-    "Turkey": {"Senegal": 0.0, "DRC": 0.0, "CoteIvoire": 0.0, "Ethiopia": 0.60},
-    "Israel": {"Senegal": 0.0, "DRC": 0.0, "CoteIvoire": 0.0, "Ethiopia": 0.10},
-    "Iran": {"Senegal": 0.0, "DRC": 0.0, "CoteIvoire": 0.0, "Ethiopia": 0.0},
-    "Rwanda": {"Senegal": 0.0, "DRC": 0.0, "CoteIvoire": 0.0, "Ethiopia": 0.0},
+    "China": {"Senegal":0.10, "DRC":0.60, "CoteIvoire":0.09, "Ethiopia":0.70},
+    "France": {"Senegal":0.05, "DRC":0.05, "CoteIvoire":0.20, "Ethiopia":0.10},
+    "UnitedStates": {"Senegal":0.40, "DRC":0.05, "CoteIvoire":0.0, "Ethiopia":0.15},
+    "Russia": {"Senegal":0.0, "DRC":0.10, "CoteIvoire":0.0, "Ethiopia":0.10},
+    "NonState": {"Senegal":0.05, "DRC":0.05, "CoteIvoire":0.05, "Ethiopia":0.05},
+    "Saudi": {"Senegal":0.0, "DRC":0.0, "CoteIvoire":0.0, "Ethiopia":0.20},
+    "UAE": {"Senegal":0.0, "DRC":0.0, "CoteIvoire":0.0, "Ethiopia":0.50},
+    "Turkey": {"Senegal":0.0, "DRC":0.0, "CoteIvoire":0.0, "Ethiopia":0.60},
+    "Israel": {"Senegal":0.0, "DRC":0.0, "CoteIvoire":0.0, "Ethiopia":0.10},
+    "Iran": {"Senegal":0.0, "DRC":0.0, "CoteIvoire":0.0, "Ethiopia":0.0},
+    "Rwanda": {"Senegal":0.0, "DRC":0.0, "CoteIvoire":0.0, "Ethiopia":0.0},
 }
 
 G_MIL = {
-    "China": {"Senegal": 0.33, "DRC": 0.33, "CoteIvoire": 0.0, "Ethiopia": 0.33},
-    "France": {"Senegal": 0.0, "DRC": 0.33, "CoteIvoire": 0.33, "Ethiopia": 0.0},
-    "UnitedStates": {"Senegal": 0.66, "DRC": 0.33, "CoteIvoire": 0.66, "Ethiopia": 0.66},
-    "Russia": {"Senegal": 0.0, "DRC": 0.33, "CoteIvoire": 0.10, "Ethiopia": 0.50},
-    "Rwanda": {"Senegal": 0.0, "DRC": 0.33, "CoteIvoire": 0.0, "Ethiopia": 0.0},
-    "NonState": {"Senegal": 0.0, "DRC": 1.00, "CoteIvoire": 0.0, "Ethiopia": 0.33},
-    "Saudi": {"Senegal": 0.0, "DRC": 0.0, "CoteIvoire": 0.0, "Ethiopia": 0.33},
-    "UAE": {"Senegal": 0.0, "DRC": 0.0, "CoteIvoire": 0.0, "Ethiopia": 0.33},
-    "Turkey": {"Senegal": 0.0, "DRC": 0.0, "CoteIvoire": 0.0, "Ethiopia": 0.33},
-    "Israel": {"Senegal": 0.0, "DRC": 0.0, "CoteIvoire": 0.0, "Ethiopia": 0.33},
-    "Iran": {"Senegal": 0.0, "DRC": 0.0, "CoteIvoire": 0.0, "Ethiopia": 0.0},
+    "China": {"Senegal":0.33, "DRC":0.33, "CoteIvoire":0.0, "Ethiopia":0.33},
+    "France": {"Senegal":0.0, "DRC":0.33, "CoteIvoire":0.33, "Ethiopia":0.0},
+    "UnitedStates": {"Senegal":0.66, "DRC":0.33, "CoteIvoire":0.66, "Ethiopia":0.66},
+    "Russia": {"Senegal":0.0, "DRC":0.33, "CoteIvoire":0.10, "Ethiopia":0.50},
+    "Rwanda": {"Senegal":0.0, "DRC":0.33, "CoteIvoire":0.0, "Ethiopia":0.0},
+    "NonState": {"Senegal":0.0, "DRC":1.00, "CoteIvoire":0.0, "Ethiopia":0.33},
+    "Saudi": {"Senegal":0.0, "DRC":0.0, "CoteIvoire":0.0, "Ethiopia":0.33},
+    "UAE": {"Senegal":0.0, "DRC":0.0, "CoteIvoire":0.0, "Ethiopia":0.33},
+    "Turkey": {"Senegal":0.0, "DRC":0.0, "CoteIvoire":0.0, "Ethiopia":0.33},
+    "Israel": {"Senegal":0.0, "DRC":0.0, "CoteIvoire":0.0, "Ethiopia":0.33},
+    "Iran": {"Senegal":0.0, "DRC":0.0, "CoteIvoire":0.0, "Ethiopia":0.0},
 }
 
-FSI_RAW = {"Senegal": 74.2, "DRC": 106.7, "CoteIvoire": 85.3, "Ethiopia": 98.1}
+FSI_RAW = {"Senegal":74.2, "DRC":106.7, "CoteIvoire":85.3, "Ethiopia":98.1}
 FSI_MIN, FSI_MAX = 22.0, 120.0
 FSI_NORM = {c: max(0.0, min(1.0, (FSI_RAW[c] - FSI_MIN) / (FSI_MAX - FSI_MIN))) for c in COUNTRIES}
 
-L = {"Senegal": 0.90, "DRC": 0.20, "CoteIvoire": 0.20, "Ethiopia": 0.95}
+L = {"Senegal":0.90, "DRC":0.20, "CoteIvoire":0.20, "Ethiopia":0.95}
 
 ACTOR_DISINFO = {
-    "China": {"Senegal": 0.46, "DRC": 0.50, "CoteIvoire": 0.40, "Ethiopia": 0.35},
-    "France": {"Senegal": 0.84, "DRC": 0.44, "CoteIvoire": 0.82, "Ethiopia": 0.60},
-    "UnitedStates": {"Senegal": 0.58, "DRC": 0.24, "CoteIvoire": 0.34, "Ethiopia": 0.50},
-    "Russia": {"Senegal": 0.24, "DRC": 0.50, "CoteIvoire": 0.20, "Ethiopia": 0.65},
-    "Rwanda": {"Senegal": 0.12, "DRC": 0.56, "CoteIvoire": 0.12, "Ethiopia": 0.05},
-    "Saudi": {"Senegal": 0.25, "DRC": 0.01, "CoteIvoire": 0.02, "Ethiopia": 0.10},
-    "UAE": {"Senegal": 0.25, "DRC": 0.02, "CoteIvoire": 0.02, "Ethiopia": 0.60},
-    "Turkey": {"Senegal": 0.20, "DRC": 0.02, "CoteIvoire": 0.02, "Ethiopia": 0.40},
-    "Israel": {"Senegal": 0.10, "DRC": 0.02, "CoteIvoire": 0.02, "Ethiopia": 0.20},
-    "Iran": {"Senegal": 0.08, "DRC": 0.02, "CoteIvoire": 0.02, "Ethiopia": 0.02},
-    "NonState": {"Senegal": 0.42, "DRC": 0.64, "CoteIvoire": 0.44, "Ethiopia": 0.55},
+    "China": {"Senegal":0.46, "DRC":0.50, "CoteIvoire":0.40, "Ethiopia":0.35},
+    "France": {"Senegal":0.84, "DRC":0.44, "CoteIvoire":0.82, "Ethiopia":0.60},
+    "UnitedStates": {"Senegal":0.58, "DRC":0.24, "CoteIvoire":0.34, "Ethiopia":0.50},
+    "Russia": {"Senegal":0.24, "DRC":0.50, "CoteIvoire":0.20, "Ethiopia":0.65},
+    "Rwanda": {"Senegal":0.12, "DRC":0.56, "CoteIvoire":0.12, "Ethiopia":0.05},
+    "Saudi": {"Senegal":0.25, "DRC":0.01, "CoteIvoire":0.02, "Ethiopia":0.10},
+    "UAE": {"Senegal":0.25, "DRC":0.02, "CoteIvoire":0.02, "Ethiopia":0.60},
+    "Turkey": {"Senegal":0.20, "DRC":0.02, "CoteIvoire":0.02, "Ethiopia":0.40},
+    "Israel": {"Senegal":0.10, "DRC":0.02, "CoteIvoire":0.02, "Ethiopia":0.20},
+    "Iran": {"Senegal":0.08, "DRC":0.02, "CoteIvoire":0.02, "Ethiopia":0.02},
+    "NonState": {"Senegal":0.42, "DRC":0.64, "CoteIvoire":0.44, "Ethiopia":0.55},
 }
 
 ACTOR_ELEC = {
-    "China": {"Senegal": 0.32, "DRC": 0.50, "CoteIvoire": 0.10, "Ethiopia": 0.40},
-    "France": {"Senegal": 0.68, "DRC": 0.08, "CoteIvoire": 0.80, "Ethiopia": 0.60},
-    "UnitedStates": {"Senegal": 0.46, "DRC": 0.06, "CoteIvoire": 0.06, "Ethiopia": 0.75},
-    "Russia": {"Senegal": 0.10, "DRC": 0.25, "CoteIvoire": 0.01, "Ethiopia": 0.40},
-    "Rwanda": {"Senegal": 0.10, "DRC": 0.70, "CoteIvoire": 0.05, "Ethiopia": 0.0},
-    "NonState": {"Senegal": 0.02, "DRC": 0.10, "CoteIvoire": 0.05, "Ethiopia": 0.30},
-    "Saudi": {"Senegal": 0.05, "DRC": 0.01, "CoteIvoire": 0.01, "Ethiopia": 0.20},
-    "UAE": {"Senegal": 0.05, "DRC": 0.02, "CoteIvoire": 0.02, "Ethiopia": 0.50},
-    "Turkey": {"Senegal": 0.02, "DRC": 0.02, "CoteIvoire": 0.02, "Ethiopia": 0.20},
-    "Israel": {"Senegal": 0.03, "DRC": 0.02, "CoteIvoire": 0.02, "Ethiopia": 0.30},
-    "Iran": {"Senegal": 0.02, "DRC": 0.02, "CoteIvoire": 0.02, "Ethiopia": 0.02},
+    "China": {"Senegal":0.32, "DRC":0.50, "CoteIvoire":0.10, "Ethiopia":0.40},
+    "France": {"Senegal":0.68, "DRC":0.08, "CoteIvoire":0.80, "Ethiopia":0.60},
+    "UnitedStates": {"Senegal":0.46, "DRC":0.06, "CoteIvoire":0.06, "Ethiopia":0.75},
+    "Russia": {"Senegal":0.10, "DRC":0.25, "CoteIvoire":0.01, "Ethiopia":0.40},
+    "Rwanda": {"Senegal":0.10, "DRC":0.70, "CoteIvoire":0.05, "Ethiopia":0.0},
+    "NonState": {"Senegal":0.02, "DRC":0.10, "CoteIvoire":0.05, "Ethiopia":0.30},
+    "Saudi": {"Senegal":0.05, "DRC":0.01, "CoteIvoire":0.01, "Ethiopia":0.20},
+    "UAE": {"Senegal":0.05, "DRC":0.02, "CoteIvoire":0.02, "Ethiopia":0.50},
+    "Turkey": {"Senegal":0.02, "DRC":0.02, "CoteIvoire":0.02, "Ethiopia":0.20},
+    "Israel": {"Senegal":0.03, "DRC":0.02, "CoteIvoire":0.02, "Ethiopia":0.30},
+    "Iran": {"Senegal":0.02, "DRC":0.02, "CoteIvoire":0.02, "Ethiopia":0.02},
 }
 
 ACTOR_LGBTQ = {
-    "UnitedStates": {"Senegal": 0.70, "DRC": 0.14, "CoteIvoire": 0.14, "Ethiopia": 0.80},
-    "France": {"Senegal": 0.65, "DRC": 0.13, "CoteIvoire": 0.65, "Ethiopia": 0.70},
-    "China": {"Senegal": 0.05, "DRC": 0.05, "CoteIvoire": 0.05, "Ethiopia": 0.05},
-    "Russia": {"Senegal": 0.02, "DRC": 0.02, "CoteIvoire": 0.02, "Ethiopia": 0.02},
-    "NonState": {"Senegal": 0.00, "DRC": 0.00, "CoteIvoire": 0.00, "Ethiopia": 0.00},
-    "Saudi": {"Senegal": 0.01, "DRC": 0.01, "CoteIvoire": 0.01, "Ethiopia": 0.01},
-    "UAE": {"Senegal": 0.02, "DRC": 0.02, "CoteIvoire": 0.02, "Ethiopia": 0.02},
-    "Turkey": {"Senegal": 0.02, "DRC": 0.02, "CoteIvoire": 0.02, "Ethiopia": 0.02},
-    "Israel": {"Senegal": 0.01, "DRC": 0.01, "CoteIvoire": 0.01, "Ethiopia": 0.01},
-    "Iran": {"Senegal": 0.01, "DRC": 0.01, "CoteIvoire": 0.01, "Ethiopia": 0.01},
-    "Rwanda": {"Senegal": 0.02, "DRC": 0.02, "CoteIvoire": 0.02, "Ethiopia": 0.02},
+    "UnitedStates": {"Senegal":0.70, "DRC":0.14, "CoteIvoire":0.14, "Ethiopia":0.80},
+    "France": {"Senegal":0.65, "DRC":0.13, "CoteIvoire":0.65, "Ethiopia":0.70},
+    "China": {"Senegal":0.05, "DRC":0.05, "CoteIvoire":0.05, "Ethiopia":0.05},
+    "Russia": {"Senegal":0.02, "DRC":0.02, "CoteIvoire":0.02, "Ethiopia":0.02},
+    "NonState": {"Senegal":0.00, "DRC":0.00, "CoteIvoire":0.00, "Ethiopia":0.00},
+    "Saudi": {"Senegal":0.01, "DRC":0.01, "CoteIvoire":0.01, "Ethiopia":0.01},
+    "UAE": {"Senegal":0.02, "DRC":0.02, "CoteIvoire":0.02, "Ethiopia":0.02},
+    "Turkey": {"Senegal":0.02, "DRC":0.02, "CoteIvoire":0.02, "Ethiopia":0.02},
+    "Israel": {"Senegal":0.01, "DRC":0.01, "CoteIvoire":0.01, "Ethiopia":0.01},
+    "Iran": {"Senegal":0.01, "DRC":0.01, "CoteIvoire":0.01, "Ethiopia":0.01},
+    "Rwanda": {"Senegal":0.02, "DRC":0.02, "CoteIvoire":0.02, "Ethiopia":0.02},
 }
 
 INTENT_FACTORS = {
@@ -354,7 +341,7 @@ INTENT_FACTORS = {
     "Sovereignty": ["debt", "mil", "elec"],
     "LGBTQ": ["lgbt", "elec"],
     "Religious": ["elec", "mil"],
-    "ElectionInforce": ["elec", "debt", "mil"],
+    "ElectionInfluence": ["elec", "debt", "mil"],
     "MilitaryPresence": ["mil", "debt"],
     "ResourceDependency": ["res", "debt"],
     "SocialFragility": ["frag", "debt", "mil"]
@@ -446,13 +433,13 @@ def compute_CAs(g, R):
                 CA[intent][a][c] = clip(CA_val)
     return CA
 
+# ✅ LAZY-LOADED VULNERABILITY SYSTEM (no startup delay)
 @st.cache_resource
 def get_vulnerability_system():
-    """Compute or return cached vulnerability scores (CA matrix)."""
     g = compute_gs()
     R = compute_R(g)
     CA = compute_CAs(g, R)
     return CA
 
-# Public exports for main.py
-#VULNERABILITY_CA = _precompute_vulnerability_system()
+# Also export helper data
+# (No top-level VULNERABILITY_CA!)
