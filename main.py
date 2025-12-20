@@ -115,15 +115,19 @@ COUNTRY_MAP = {
 }
 
 # --- STRATEGIC INTENT FIX (your real list) ---
+# Real intent values from your dataset
 REAL_INTENTS_IN_DATA = [
-    "Economic Dependency", "Economic Impact",
-    "Sovereignty Erosion", "Diplomatic Influence",
+    "Economic Dependency", 
+    "Economic Impact",
+    "Sovereignty Erosion", 
+    "Diplomatic Influence",
     "LGBTQI+ Rights Intervention",
     "Religious Polarisation",
     "Resource Control",
     "Information Warfare"
 ]
 
+# Map each dataset value → vulnerability model key
 INTENT_TO_VULN_KEY = {
     "Economic Dependency": "Economic",
     "Economic Impact": "Economic",
@@ -135,16 +139,19 @@ INTENT_TO_VULN_KEY = {
     "Information Warfare": "SocialFragility"
 }
 
-UI_INTENT_LABELS = {
-    "Economic": "Economic Coercion",
-    "Sovereignty": "Sovereignty Erosion",
+# For UI: group and deduplicate, but KEEP ORIGINAL LABELS
+# We'll show one label per vulnerability dimension, using the most representative term from your data
+UI_LABEL_FOR_KEY = {
+    "Economic": "Economic Dependency / Impact",        # or pick one: "Economic Dependency"
+    "Sovereignty": "Sovereignty Erosion / Diplomatic Influence",
     "LGBTQ": "LGBTQI+ Rights Intervention",
     "Religious": "Religious Polarisation",
     "ResourceDependency": "Resource Control",
     "SocialFragility": "Information Warfare"
 }
 
-UI_INTENT_OPTIONS = ["All"] + list(UI_INTENT_LABELS.values())
+# Generate UI options
+UI_INTENT_OPTIONS = ["All"] + list(UI_LABEL_FOR_KEY.values())
 
 def get_influence_baseline_score(actor, country, intent_key):
     CA = get_vulnerability_system()
