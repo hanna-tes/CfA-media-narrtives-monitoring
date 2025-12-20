@@ -115,19 +115,16 @@ COUNTRY_MAP = {
 }
 
 # --- STRATEGIC INTENT FIX (your real list) ---
-# Real intent values from your dataset
 REAL_INTENTS_IN_DATA = [
-    "Economic Dependency", 
-    "Economic Impact",
-    "Sovereignty Erosion", 
-    "Diplomatic Influence",
+    "Economic Dependency", "Economic Impact",
+    "Sovereignty Erosion", "Diplomatic Influence",
     "LGBTQI+ Rights Intervention",
     "Religious Polarisation",
     "Resource Control",
     "Information Warfare"
 ]
 
-# Map each dataset value → vulnerability model key
+# Map dataset values → vulnerability keys
 INTENT_TO_VULN_KEY = {
     "Economic Dependency": "Economic",
     "Economic Impact": "Economic",
@@ -139,10 +136,9 @@ INTENT_TO_VULN_KEY = {
     "Information Warfare": "SocialFragility"
 }
 
-# For UI: group and deduplicate, but KEEP ORIGINAL LABELS
-# We'll show one label per vulnerability dimension, using the most representative term from your data
+# For UI: use grouped labels (as you designed)
 UI_LABEL_FOR_KEY = {
-    "Economic": "Economic Dependency / Impact",        # or pick one: "Economic Dependency"
+    "Economic": "Economic Dependency / Impact",
     "Sovereignty": "Sovereignty Erosion / Diplomatic Influence",
     "LGBTQ": "LGBTQI+ Rights Intervention",
     "Religious": "Religious Polarisation",
@@ -150,7 +146,6 @@ UI_LABEL_FOR_KEY = {
     "SocialFragility": "Information Warfare"
 }
 
-# Generate UI options
 UI_INTENT_OPTIONS = ["All"] + list(UI_LABEL_FOR_KEY.values())
 
 def get_influence_baseline_score(actor, country, intent_key):
@@ -168,17 +163,12 @@ def get_influence_baseline_score(actor, country, intent_key):
     else:
         return CA.get(intent_key, {}).get(a_norm, {}).get(c_norm, 0.0)
 
-# --- MOCK PLACEHOLDERS REMOVED — using real vulnerability system ---
-
-# --- DATA LOADER AND ENRICHMENT FUNCTIONS ---
-# (Using data_loader.py versions — no duplication)
-
 # --- STREAMLIT APP LAYOUT ---
 
+# ✅ FIXED: Removed trailing spaces in URLs
 NEW_BACKGROUND_URL = "https://media.istockphoto.com/id/1502033887/vector/beige-gray-grainy-gradient-background-poster-backdrop-noise-texture-webpage-header-wide.jpg?s=612x612&w=0&k=20&c=eGwiA8zZ4cobGeMz5QeRs5zKzlp1Rr-BcROwT4S22y0="
 BRIGHT_LOGO_URL = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/main/CFA_Logo.png"
 
-# 🎨 Custom CSS for theme-aware dark cards AND READABILITY FIX
 st.markdown(f"""
 <style>
 /* -------------------- THEME AWARE STYLES -------------------- */
@@ -281,29 +271,22 @@ with st.spinner("Enriching articles (Scraping Images)..."):
     def progress_callback(p, msg):
         progress_bar.progress(min(p, 1.0))
         status_text.text(msg)
-    # df now includes the 'urlToImage' column populated by the scraper
     df = enrich_with_scraping_and_llm(df_base, progress_callback=progress_callback)
 progress_bar.empty()
 status_text.empty()
 
-# ------------------ CREATE DISPLAY TEXT FROM article_text (which now holds the summary) ------------------
+# ------------------ CREATE DISPLAY TEXT FROM article_text ------------------
 def create_display_text(df_in):
     df_out = df_in.copy()
     
     def extract_summary_and_headline(text):
         if not isinstance(text, str) or not text.strip() or "No summary available" in text:
             return "Summary not available.", "No Headline"
-        
-        # Split into sentences more robustly
         sentences = [s.strip() for s in re.split(r'[.!?]+', text) if s.strip()]
         if not sentences:
             return text[:100] + "...", "Article Snippet"
-        
         headline = sentences[0] + "."
-        if len(sentences) > 1:
-            summary = headline + " " + sentences[1] + "."
-        else:
-            summary = headline
+        summary = headline + " " + sentences[1] + "." if len(sentences) > 1 else headline
         return summary, headline
 
     results = df_out['article_text'].apply(extract_summary_and_headline)
@@ -319,10 +302,7 @@ with st.sidebar:
     selected_media = st.selectbox("Media Outlet", ["All"] + get_media_names())
     selected_country = st.selectbox("Target Country", ["All"] + get_countries())
     selected_actor = st.selectbox("Foreign Actor", ["All"] + get_actors())
-    
-    # ✅ FIXED: Use correct intent options
     selected_intent_ui = st.selectbox("Strategic Intent", UI_INTENT_OPTIONS)
-    
     tones = ["All"] + sorted(df['tone'].dropna().unique())
     selected_tone = st.selectbox("Tone", tones)
 
@@ -335,53 +315,49 @@ if selected_country != "All":
 if selected_actor != "All":
     filtered = filtered[filtered['inferred_actor'] == selected_actor]
 
-# ✅ FIXED: Filter by real strategic_intent values
+# ✅ FIXED: Replace broken UI_INTENT_LABELS loop
 if selected_intent_ui != "All":
-    # Find vulnerability key from UI label
-    selected_vuln_key = None
-    for key, label in UI_INTENT_LABELS.items():
+    # Reverse map: UI label → vulnerability key
+    vuln_key = None
+    for key, label in UI_LABEL_FOR_KEY.items():
         if label == selected_intent_ui:
-            selected_vuln_key = key
+            vuln_key = key
             break
-    if selected_vuln_key:
-        # Get all dataset values that map to this key
-        allowed_values = [k for k, v in INTENT_TO_VULN_KEY.items() if v == selected_vuln_key]
+    if vuln_key:
+        # Get all dataset values for this vulnerability key
+        allowed_values = [k for k, v in INTENT_TO_VULN_KEY.items() if v == vuln_key]
         filtered = filtered[filtered['strategic_intent'].isin(allowed_values)]
 
 if selected_tone != "All":
     filtered = filtered[filtered['tone'] == selected_tone]
 
-# Influence Index Logic (Baseline Structural Vulnerability Lookup)
-# --- 1. KPI Metrics ---
+# --- KPI Metrics ---
 st.header("📊 Key Indicators")
 
-# Calculate KPIs
 current_article_count = len(filtered)
 previous_article_count = len(df) * 0.95 
 article_delta = current_article_count - previous_article_count
 article_delta_str = f"{article_delta:,.0f}"
 
-# Tone Score calculation (required for dynamic CII)
+# Tone Score
 if 'tone' in filtered.columns:
     tone_mapping = {
         'Factual': 0.0, 'Sensationalist': -0.3, 'Cynical': -0.8, 'Alarmist': -1.0, 'Positive': 1.0, 'Neutral': 0.0
     }
     filtered['tone_clean'] = filtered['tone'].astype(str).str.title().str.strip()
     filtered['tone_numeric'] = filtered['tone_clean'].map(tone_mapping).fillna(0)
-
     current_tone_score = filtered['tone_numeric'].mean() if not filtered.empty else 0.0
-    previous_tone_score = 0.1 
-    tone_delta = current_tone_score - previous_tone_score
+    tone_delta = current_tone_score - 0.1
     tone_delta_str = f"{tone_delta:+.2f}"
 else:
     current_tone_score = 0.0
     tone_delta_str = "N/A"
 
 # --- CII DYNAMIC CALCULATION ---
-# ✅ FIXED: Use selected_vuln_key
+# ✅ FIXED: Use vuln_key from above
 if selected_intent_ui != "All":
     selected_vuln_key_for_score = None
-    for key, label in UI_INTENT_LABELS.items():
+    for key, label in UI_LABEL_FOR_KEY.items():
         if label == selected_intent_ui:
             selected_vuln_key_for_score = key
             break
@@ -390,147 +366,85 @@ else:
     baseline_influence_score = get_influence_baseline_score(selected_actor, selected_country, "All")
 
 final_influence_score = baseline_influence_score
-
 if baseline_influence_score > 0 and current_article_count > 0:
     volume_factor = min(1.0, current_article_count / 100)
     tone_factor = 1.0 - (current_tone_score / 2.0)
-    dynamic_modulation_factor = (volume_factor * tone_factor) 
-    final_influence_score = min(1.0, baseline_influence_score * dynamic_modulation_factor)
+    final_influence_score = min(1.0, baseline_influence_score * volume_factor * tone_factor)
 
-# Recalculate Delta based on the final score
 previous_influence_score = final_influence_score * (0.95 + (0.1 * (np.random.rand() - 0.5))) if final_influence_score > 0.05 else 0.0
 influence_delta = final_influence_score - previous_influence_score
 influence_delta_str = f"{influence_delta:+.2f}"
 
 col1, col2, col3 = st.columns(3)
-
 with col1:
-    st.metric(
-        label="Total Articles Analyzed",
-        value=f"{current_article_count:,.0f}",
-        delta=article_delta_str,
-        delta_color="normal" 
-    )
-
+    st.metric("Total Articles Analyzed", f"{current_article_count:,.0f}", article_delta_str)
 with col2:
-    st.metric(
-        label="Average Tone Score (Sentiment)",
-        value=f"{current_tone_score:.2f}",
-        delta=tone_delta_str,
-        delta_color="inverse" 
-    )
-
+    st.metric("Average Tone Score (Sentiment)", f"{current_tone_score:.2f}", tone_delta_str, delta_color="inverse")
 with col3:
-    st.metric(
-        label="Contextual Influence Index",
-        value=f"{final_influence_score:.2f}",
-        delta=influence_delta_str,
-        delta_color="inverse"
-    )
+    st.metric("Contextual Influence Index", f"{final_influence_score:.2f}", influence_delta_str, delta_color="inverse")
 
-# Alert if Influence Index is high 
+# Alerts
 if selected_actor != "All" and selected_country != "All":
-    if final_influence_score > 0.6 and final_influence_score < 0.8:
-        st.warning(f"⚠️ **Moderate Vulnerability Alert:** The Contextual Influence Index for **{selected_actor}** in **{selected_country}** is elevated ({final_influence_score:.2f}).")
-    elif final_influence_score >= 0.8:
-        st.error(f"🚨 **High Vulnerability Warning:** The Contextual Influence Index for **{selected_actor}** in **{selected_country}** is critically high ({final_influence_score:.2f}).")
+    if final_influence_score >= 0.8:
+        st.error(f"🚨 **High Vulnerability Warning:** CII for **{selected_actor}** in **{selected_country}** is critically high ({final_influence_score:.2f}).")
+    elif final_influence_score >= 0.6:
+        st.warning(f"⚠️ **Moderate Vulnerability Alert:** CII is elevated ({final_influence_score:.2f}).")
 
-
-# --- Metric Explanation Section ---
-st.markdown("<br>", unsafe_allow_html=True)
-
-# ✅ Collapsed by default
-with st.expander("❓ Understanding the Dashboard Metrics (Click to Expand)", expanded=False):
-    st.markdown("---")
+# Explanation (collapsed by default)
+with st.expander("❓ Understanding the Dashboard Metrics", expanded=False):
+    st.markdown("""
+    ### 🔹 **Contextual Vulnerability Index (CVI)**
+    Combines **structural vulnerability** (debt, military, etc.) and **narrative activity** (volume, tone).
     
-    st.markdown("#### 1. Average Tone Score (Sentiment)")
-    st.markdown(
-        """
-        This score measures the overall **journalistic framing and emotional valence** of the filtered articles. 
-        It is tuned to your specific set of journalistic tone categories, ranging from **-1.0 (Critically Negative)** to **+1.0 (Highly Positive)**.
-        """
-    )
+    ### 🔹 **Tone Score**
+    Ranges from **-1.0 (alarmist)** to **+1.0 (positive)**.
     
-    st.markdown("##### CII Components (The Risk Formula):")
-    st.markdown(
-        """
-        1.  **Structural Vulnerability (G-Factor):** **Why the country is weak.** (The static baseline component.)
-        2.  **Narrative Amplification (R-Factor):** **What the actor is doing.** (The dynamic component, calculated from article volume and tone.)
-        
-        A high CII means the actor's efforts are landing on highly vulnerable ground.
-        """
-    )
-    st.markdown("")
+    ### 🔹 Formula
+    `CVI = Structural_Vulnerability × min(Volume/100, 1) × (1 - Tone/2)`
+    """)
 
-    
 st.markdown("---")
-
-# --- 2. Time-Series Trend Analysis ---
 st.header("📈 Article Volume Trend")
 
 if 'posting_time' in filtered.columns and not filtered.empty:
-    
     filtered['posting_time'] = pd.to_datetime(filtered['posting_time'], errors='coerce')
     filtered.dropna(subset=['posting_time'], inplace=True)
-    
     time_series_data = filtered.resample('D', on='posting_time')['URL'].count().reset_index()
     time_series_data.columns = ['Date', 'Article Count']
-    
-    fig = px.line(
-        time_series_data,
-        x='Date',
-        y='Article Count',
-        title=f'Daily Article Volume for {selected_actor} in {selected_country}',
-        labels={'Article Count': 'Number of Articles'},
-        template='plotly_dark' 
-    )
-    
-    fig.update_traces(mode='lines+markers', marker_size=5)
-    fig.update_layout(hovermode="x unified", title_x=0.5)
-    
+    fig = px.line(time_series_data, x='Date', y='Article Count', title=f'Daily Volume: {selected_actor} in {selected_country}', template='plotly_dark')
+    fig.update_traces(mode='lines+markers')
     st.plotly_chart(fig, use_container_width=True)
 else:
-    st.markdown("<p style='text-align: center; color: #777;'>No time-series trend data available based on current filters.</p>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; color: #777;'>No time-series data available.</p>", unsafe_allow_html=True)
 
 st.markdown("---")
 st.write(f"### Showing **{len(filtered)}** of **{len(df)}** articles")
 
-
-# Pagination (5 per page)
+# Pagination
 articles_per_page = 5
 total_pages = max(1, (len(filtered) - 1) // articles_per_page + 1)
-
 if "page" not in st.session_state:
     st.session_state.page = 0
-
 start_idx = st.session_state.page * articles_per_page
 end_idx = start_idx + articles_per_page
 page_articles = filtered.iloc[start_idx:end_idx]
 
-# Display Articles 
+# Display Articles
 for _, row in page_articles.iterrows():
-    
     summary_display = str(row.get('llm_summary', 'Summary extraction failed.'))
     headline = str(row.get('display_headline', 'Article Snippet (No Headline)'))
-    
-    # READS the image URL from the 'urlToImage' column (populated by the scraper above)
-    image_url = str(row.get('urlToImage', None)) 
+    image_url = str(row.get('urlToImage', ''))
+    display_image = image_url if image_url and image_url not in ['None', 'nan', ''] else 'https://placehold.co/400x200/cccccc/000000?text=No+Image'
     media = str(row.get('media_outlet', 'Unknown'))
     tone = str(row.get('tone', 'N/A'))
     intent = str(row.get('strategic_intent', 'N/A'))
-    
     posting_time = "Date Unknown"
     if pd.notna(row.get('posting_time')):
         try:
-            if isinstance(row['posting_time'], pd.Timestamp):
-                 posting_time = row['posting_time'].strftime('%Y-%m-%d %H:%M')
-        except Exception:
+            posting_time = pd.to_datetime(row['posting_time']).strftime('%Y-%m-%d %H:%M')
+        except:
             pass
 
-    # Image rendering logic
-    display_image = image_url if image_url and image_url not in ['None', 'nan'] else 'https://placehold.co/400x200/cccccc/000000?text=No+Image  '
-
-    # 🎨 Render Card
     st.markdown(f"""
     <div class="card">
         <div style="display: flex; align-items: flex-start;">
@@ -551,14 +465,11 @@ for _, row in page_articles.iterrows():
     </div>
     """, unsafe_allow_html=True)
 
-# Pagination Controls (at bottom)
-st.markdown("<br>", unsafe_allow_html=True)
+# Pagination Controls
 col1, col2, col3 = st.columns([1, 2, 1])
 with col1:
-    if st.button("⬅ Previous", on_click=lambda: st.session_state.update(page=max(0, st.session_state.page - 1)), disabled=(st.session_state.page == 0)):
-        pass
+    st.button("⬅ Previous", on_click=lambda: st.session_state.update(page=max(0, st.session_state.page - 1)), disabled=(st.session_state.page == 0))
 with col2:
-    st.markdown(f"<h5 style='text-align: center; color: var(--text-color);'>Page {st.session_state.page + 1} of {total_pages}</h5>", unsafe_allow_html=True)
+    st.markdown(f"<h5 style='text-align: center;'>Page {st.session_state.page + 1} of {total_pages}</h5>", unsafe_allow_html=True)
 with col3:
-    if st.button("Next ➡", on_click=lambda: st.session_state.update(page=min(total_pages - 1, st.session_state.page + 1)), disabled=(st.session_state.page >= total_pages - 1)):
-        pass
+    st.button("Next ➡", on_click=lambda: st.session_state.update(page=min(total_pages - 1, st.session_state.page + 1)), disabled=(st.session_state.page >= total_pages - 1))
