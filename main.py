@@ -279,35 +279,29 @@ with st.spinner("Enriching articles (Scraping Images)..."):
 progress_bar.empty()
 status_text.empty()
 
-# --- FIXED: Use generated_summary for display ---
+# ------------------ CREATE DISPLAY TEXT FROM article_text (which now holds the summary) ------------------
 def create_display_text(df_in):
     df_out = df_in.copy()
     
     def extract_summary_and_headline(text):
-        if not isinstance(text, str) or not text.strip():
-            return 'Summary extraction pending or failed.', 'Article Snippet (No Text)'
+        if not isinstance(text, str) or not text.strip() or "No summary available" in text:
+            return "Summary not available.", "No Headline"
         
-        headline_match = re.search(r'[^.?!]*[.?!]', text)
-        headline = headline_match.group(0).strip() if headline_match else 'Article Snippet'
+        # Split into sentences more robustly
+        sentences = [s.strip() for s in re.split(r'[.!?]+', text) if s.strip()]
+        if not sentences:
+            return text[:100] + "...", "Article Snippet"
         
-        if headline_match:
-            text_after_first = text[headline_match.end():]
-            second_sentence_match = re.search(r'[^.?!]*[.?!]', text_after_first)
-            
-            if second_sentence_match and headline_match.end() + second_sentence_match.end() < 500:
-                summary = headline + " " + second_sentence_match.group(0).strip()
-            else:
-                summary = headline
+        headline = sentences[0] + "."
+        if len(sentences) > 1:
+            summary = headline + " " + sentences[1] + "."
         else:
-            summary = text[:200].strip() + '...'
-            
+            summary = headline
         return summary, headline
 
-    # ✅ FIXED: Use 'generated_summary' instead of 'article_text'
-    results = df_out['generated_summary'].fillna('').apply(lambda x: extract_summary_and_headline(x))
+    results = df_out['article_text'].apply(extract_summary_and_headline)
     df_out['llm_summary'] = [r[0] for r in results]
     df_out['display_headline'] = [r[1] for r in results]
-    
     return df_out
 
 df = create_display_text(df)
