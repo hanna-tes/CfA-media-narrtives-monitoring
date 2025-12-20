@@ -6,9 +6,8 @@ import numpy as np
 from urllib.parse import urlparse
 import re
 from math import isfinite
-from data_loader import get_vulnerability_system
 
-# Import everything from data_loader (ensure it includes the vulnerability logic)
+# Import from data_loader (now safe and fast)
 from data_loader import (
     load_and_transform_data,
     enrich_with_scraping_and_llm,
@@ -16,12 +15,13 @@ from data_loader import (
     get_countries,
     get_actors,
     KEYWORD_LABELS,
-    get_vulnerability_system,  # ✅ Keep this (new)
-    compute_gs,                # ✅ Keep (used for radar chart)
+    get_vulnerability_system,
+    compute_gs,
     COUNTRIES as VULN_COUNTRIES,
     ACTORS as VULN_ACTORS
 )
-# ------------------ NAME MAPPING FOR UI/DATA ALIGNMENT ------------------
+
+# ------------------ NAME MAPPING ------------------
 ACTOR_MAP = {
     "France": "France",
     "Russia": "Russia",
@@ -50,12 +50,7 @@ COUNTRY_MAP = {
     "Ivory Coast": "CoteIvoire",
 }
 
-# Reverse maps for display
-ACTOR_UI_NAME = {v: k for k, v in ACTOR_MAP.items() if k != v}
-ACTOR_UI_NAME.update({a: a for a in VULN_ACTORS})  # fallback
-
-# ------------------ INTENT UI LABELING ------------------
-# ------------------ STRATEGIC INTENT MAPPING (aligned with dataset) ------------------
+# ------------------ STRATEGIC INTENT MAPPING ------------------
 STRATEGIC_INTENT_MAPPING = {
     "Economic": {
         "ui_label": "Economic Coercion",
@@ -91,27 +86,10 @@ STRATEGIC_INTENT_MAPPING = {
     }
 }
 
-# Generate UI options (only show intents that exist in your data)
 UI_INTENT_OPTIONS = ["All"] + [
     info["ui_label"] for info in STRATEGIC_INTENT_MAPPING.values()
     if info["dataset_values"]
 ]
-
-def get_influence_baseline_score(actor, country, intent_key):
-    # Get the CA system via cached function (not global var)
-    CA = get_vulnerability_system()  # ← this is the fix!
-    
-    a_norm = ACTOR_MAP.get(actor, actor)
-    c_norm = COUNTRY_MAP.get(country, country)
-
-    if intent_key == "All":
-        scores = []
-        for i in CA:  # ← now uses local `CA`, not global `VULNERABILITY_CA`
-            if a_norm in CA[i] and c_norm in CA[i][a_norm]:
-                scores.append(CA[i][a_norm][c_norm])
-        return sum(scores) / len(scores) if scores else 0.0
-    else:
-        return CA.get(intent_key, {}).get(a_norm, {}).get(c_norm, 0.0)
 
 # ------------------ THEME & LOGO ------------------
 NEW_BACKGROUND_URL = "https://media.istockphoto.com/id/1502033887/vector/beige-gray-grainy-gradient-background-poster-backdrop-noise-texture-webpage-header-wide.jpg?s=612x612&w=0&k=20&c=eGwiA8zZ4cobGeMz5QeRs5zKzlp1Rr-BcROwT4S22y0="
@@ -124,7 +102,6 @@ st.markdown(f"""
     background-size: cover;
     background-attachment: fixed;
 }}
-/* Metric Cards */
 .metric-card {{
     background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
     padding: 20px;
@@ -146,10 +123,8 @@ st.markdown(f"""
     font-weight: 500;
 }}
 .metric-delta.positive {{ color: #38a169; }}
-.metric-delta.negative {{ color: #e53e3e; }}
+.metric-delta.negative {{ color: #e53e3c; }}
 .metric-delta {{ font-size: 0.95em; margin-top: 6px; }}
-
-/* Keep your dark article cards */
 .card {{
     background: #1e1e1e; 
     color: #ffffff; 
@@ -227,23 +202,17 @@ with st.spinner("Enriching articles (Scraping & Summarizing)..."):
 progress_bar.empty()
 status_text.empty()
 
-# ------------------ CREATE DISPLAY TEXT ------------------
+# ------------------ CREATE DISPLAY TEXT FROM generated_summary ------------------
 def create_display_text(df_in):
     df_out = df_in.copy()
-    def extract_summary_and_headline(text):
-        if not isinstance(text, str) or not text.strip():
-            return 'Summary extraction pending or failed.', 'Article Snippet (No Text)'
-        sentences = re.split(r'[.!?]+', text)
-        sentences = [s.strip() for s in sentences if s.strip()]
-        if not sentences:
-            return text[:100] + "...", "Article Snippet"
-        headline = sentences[0] + "."
-        if len(sentences) > 1:
-            summary = headline + " " + sentences[1] + "."
-        else:
-            summary = headline
+    def safe_summary(text):
+        if not isinstance(text, str) or "No summary available" in text:
+            return "Summary not available.", "No Headline"
+        sentences = [s.strip() for s in re.split(r'[.!?]+', text) if s.strip()]
+        headline = sentences[0] + "." if sentences else "Article Summary"
+        summary = " ".join([s + "." for s in sentences[:2]]) if len(sentences) >= 2 else headline
         return summary, headline
-    results = df_out['article_text'].fillna('').apply(extract_summary_and_headline)
+    results = df_out['generated_summary'].apply(safe_summary)
     df_out['llm_summary'] = [r[0] for r in results]
     df_out['display_headline'] = [r[1] for r in results]
     return df_out
@@ -260,8 +229,7 @@ with st.sidebar:
     tones = ["All"] + sorted(df['tone'].dropna().unique().tolist())
     selected_tone = st.selectbox("Tone", tones)
 
-# Map UI intent back to internal key
-# Resolve selected intent → vulnerability key + dataset values
+# ------------------ RESOLVE INTENT ------------------
 selected_vuln_key = None
 allowed_dataset_values = []
 
@@ -304,24 +272,18 @@ if selected_actor != "All" and selected_country != "All":
         baseline_influence_score = get_influence_baseline_score(selected_actor, selected_country, selected_vuln_key)
     else:
         baseline_influence_score = get_influence_baseline_score(selected_actor, selected_country, "All")
-        
-    # Dynamic modulation
+    
     volume_factor = min(1.0, len(filtered) / 100)
     tone_factor = 1.0 - (current_tone_score / 2.0)
     final_influence_score = min(1.0, baseline_influence_score * volume_factor * tone_factor)
-else:
-    final_influence_score = 0.0
 
-# ------------------ KPI METRICS (FANCY CARDS) ------------------
+# ------------------ KPI METRICS ------------------
 current_article_count = len(filtered)
 previous_article_count = max(1, int(len(df) * 0.95))
 article_delta = current_article_count - previous_article_count
 article_delta_class = "positive" if article_delta >= 0 else "negative"
-
 tone_delta = current_tone_score - 0.1
 tone_delta_class = "positive" if tone_delta >= 0 else "negative"
-
-influence_delta = final_influence_score - (final_influence_score * 0.95)
 influence_delta_class = "negative" if final_influence_score > 0.6 else "positive"
 
 st.header("📊 Key Indicators")
@@ -358,8 +320,8 @@ if selected_actor != "All" and selected_country != "All":
     elif final_influence_score >= 0.6:
         st.warning(f"⚠️ **Elevated Risk**: Contextual vulnerability is high (**{final_influence_score:.2f}**). Monitor closely.")
 
-# ------------------ SCORE EXPLANATION (NEW SECTION) ------------------
-with st.expander("📘 What Do These Scores Mean?", expanded=False):
+# ------------------ SCORE EXPLANATION (COLLAPSED BY DEFAULT) ------------------
+with st.expander("📘 What Do These Scores Mean?"):
     st.markdown("""
     ### 🔹 **Contextual Vulnerability Index (CVI)**
     A **0.0–1.0** score that combines:
@@ -384,17 +346,34 @@ with st.expander("📘 What Do These Scores Mean?", expanded=False):
     Negative tone **increases** vulnerability (since adversaries often use alarmist framing).
     """)
 
-# ------------------ RADIAL CHART (if applicable) ------------------
-if selected_actor != "All" and selected_country != "All" and intent_key != "All":
+# ------------------ GET BASELINE SCORE FUNCTION ------------------
+def get_influence_baseline_score(actor, country, intent_key):
+    CA = get_vulnerability_system()
+    a_norm = ACTOR_MAP.get(actor, actor)
+    c_norm = COUNTRY_MAP.get(country, country)
+
+    if c_norm not in VULN_COUNTRIES:
+        return 0.0
+
+    if intent_key == "All":
+        scores = []
+        for i in CA:
+            if a_norm in CA[i] and c_norm in CA[i][a_norm]:
+                scores.append(CA[i][a_norm][c_norm])
+        return sum(scores) / len(scores) if scores else 0.0
+    else:
+        return CA.get(intent_key, {}).get(a_norm, {}).get(c_norm, 0.0)
+
+# ------------------ RADIAL CHART ------------------
+if selected_actor != "All" and selected_country != "All" and selected_vuln_key:
     st.subheader("🎯 Vulnerability Drivers")
     g_system = compute_gs()
     a_norm = ACTOR_MAP.get(selected_actor, selected_actor)
     c_norm = COUNTRY_MAP.get(selected_country, selected_country)
     
     if a_norm in g_system and c_norm in g_system[a_norm]:
-        factors = list(VULNERABILITY_CA[intent_key].keys())  # Not quite—use INTENT_FACTORS
         from data_loader import INTENT_FACTORS
-        factor_list = INTENT_FACTORS.get(intent_key, [])
+        factor_list = INTENT_FACTORS.get(selected_vuln_key, [])
         r_vals = [g_system[a_norm][c_norm].get(f, 0) for f in factor_list]
         theta_vals = [f.replace('_', ' ').title() for f in factor_list]
         
@@ -404,17 +383,17 @@ if selected_actor != "All" and selected_country != "All" and intent_key != "All"
                 theta=theta_vals,
                 line_close=True,
                 template="plotly_dark",
-                title=f"Key Drivers: {INTENT_UI_MAP.get(intent_key, intent_key)}"
+                title=f"Key Drivers: {STRATEGIC_INTENT_MAPPING[selected_vuln_key]['ui_label']}"
             )
             fig.update_traces(fill='toself', fillcolor='rgba(100, 149, 237, 0.3)')
             st.plotly_chart(fig, use_container_width=True)
 
 # ------------------ REGIONAL HEATMAP ------------------
-if selected_actor != "All" and intent_key != "All":
+if selected_actor != "All" and selected_vuln_key:
     st.subheader("🌍 Regional Vulnerability Comparison")
     heatmap_data = []
     for c in VULN_COUNTRIES:
-        score = get_influence_baseline_score(selected_actor, c, intent_key)
+        score = get_influence_baseline_score(selected_actor, c, selected_vuln_key)
         heatmap_data.append({"Country": c, "Vulnerability": score})
     df_heat = pd.DataFrame(heatmap_data)
     fig = px.bar(
@@ -424,12 +403,12 @@ if selected_actor != "All" and intent_key != "All":
         color="Vulnerability",
         color_continuous_scale="RdYlBu_r",
         range_color=[0,1],
-        title=f"How vulnerable is each country to {selected_actor} on '{INTENT_UI_MAP.get(intent_key, intent_key)}'?"
+        title=f"How vulnerable is each country to {selected_actor} on '{STRATEGIC_INTENT_MAPPING[selected_vuln_key]['ui_label']}'?"
     )
     fig.update_layout(plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)')
     st.plotly_chart(fig, use_container_width=True)
 
-# ------------------ ARTICLE LISTING (UNCHANGED) ------------------
+# ------------------ ARTICLE LISTING ------------------
 st.markdown("---")
 st.write(f"### Showing **{len(filtered)}** of **{len(df)}** articles")
 
