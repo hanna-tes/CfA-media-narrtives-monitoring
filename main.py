@@ -15,7 +15,7 @@ except ImportError:
     requests = None
     BeautifulSoup = None
 
-# --- SCRAPER FUNCTIONS (Provided by User) ---
+# --- SCRAPER FUNCTIONS ---
 
 def fetch_og_image(url, timeout=10):
     """Fetch Open Graph image from article URL."""
@@ -114,7 +114,7 @@ COUNTRY_MAP = {
     "Ivory Coast": "CoteIvoire",
 }
 
-# --- STRATEGIC INTENT FIX (your real list) ---
+# --- STRATEGIC INTENT ---
 REAL_INTENTS_IN_DATA = [
     "Economic Dependency", "Economic Impact",
     "Sovereignty Erosion", "Diplomatic Influence",
@@ -136,7 +136,7 @@ INTENT_TO_VULN_KEY = {
     "Information Warfare": "SocialFragility"
 }
 
-# For UI: use grouped labels (as you designed)
+# For UI: use grouped labels 
 UI_LABEL_FOR_KEY = {
     "Economic": "Economic Dependency / Impact",
     "Sovereignty": "Sovereignty Erosion / Diplomatic Influence",
@@ -165,7 +165,7 @@ def get_influence_baseline_score(actor, country, intent_key):
 
 # --- STREAMLIT APP LAYOUT ---
 
-# ✅ FIXED: Removed trailing spaces in URLs
+# ✅ New_BACKGROUND_URL and BRIGHT_LOGO_URL
 NEW_BACKGROUND_URL = "https://media.istockphoto.com/id/1502033887/vector/beige-gray-grainy-gradient-background-poster-backdrop-noise-texture-webpage-header-wide.jpg?s=612x612&w=0&k=20&c=eGwiA8zZ4cobGeMz5QeRs5zKzlp1Rr-BcROwT4S22y0="
 BRIGHT_LOGO_URL = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/main/CFA_Logo.png"
 
@@ -354,7 +354,7 @@ else:
     tone_delta_str = "N/A"
 
 # --- CII DYNAMIC CALCULATION ---
-# ✅ FIXED: Use vuln_key from above
+#  Use vuln_key from above
 if selected_intent_ui != "All":
     selected_vuln_key_for_score = None
     for key, label in UI_LABEL_FOR_KEY.items():
