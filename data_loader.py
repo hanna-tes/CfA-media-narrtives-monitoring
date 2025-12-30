@@ -202,7 +202,7 @@ def enrich_with_scraping_and_llm(df, progress_callback=None):
         if progress_callback:
             progress_callback((i + 1) / total, f"Processing {i+1}/{total}...")
 
-    # ✅ KEY FIX: Use NEW COLUMN for summaries
+    # ✅ Use NEW COLUMN for summaries
     df['generated_summary'] = df['URL'].map(scraped_summary).fillna("No summary available.")
     df['scraped_content'] = df['URL'].map(scraped_content).fillna(df['scraped_content'])
     df['urlToImage'] = df['URL'].map(scraped_image).fillna('https://placehold.co/400x200/cccccc/000000?text=No+Image')
@@ -433,7 +433,7 @@ def compute_CAs(g, R):
                 CA[intent][a][c] = clip(CA_val)
     return CA
 
-# ✅ LAZY-LOADED VULNERABILITY SYSTEM (no startup delay)
+# LAZY-LOADED VULNERABILITY SYSTEM (no startup delay)
 @st.cache_resource
 def get_vulnerability_system():
     g = compute_gs()
