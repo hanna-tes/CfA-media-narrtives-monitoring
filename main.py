@@ -4,9 +4,7 @@ import plotly.express as px
 import re
 import numpy as np 
 from urllib.parse import urlparse, urljoin
-import pdfkit
-import base64
-from io import BytesIO
+
 
 # NOTE: The following libraries are REQUIRED for the real scraping logic provided by the user.
 # If running in a restricted environment (like a code interpreter), these operations will fail.
@@ -479,8 +477,14 @@ with col3:
 
 
 # ------------------ PDF REPORT GENERATION (WeasyPrint) ------------------
+# ------------------ PDF REPORT GENERATION (NOT AVAILABLE) ------------------
 st.markdown("---")
 st.header("📥 Export Report")
+st.info("""
+📄 **PDF Export Feature**  
+This feature requires additional system dependencies and is not available in the current environment.  
+It will be enabled in the production deployment on Streamlit Cloud.
+""")
 
 if not WEASYPRINT_AVAILABLE:
     st.info("📄 PDF export is not available in this environment.")
