@@ -5,7 +5,11 @@ import re
 import numpy as np 
 from urllib.parse import urlparse, urljoin
 
-
+try:
+    from weasyprint import HTML
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
 # NOTE: The following libraries are REQUIRED for the real scraping logic provided by the user.
 # If running in a restricted environment (like a code interpreter), these operations will fail.
 try:
@@ -476,11 +480,94 @@ with col3:
     st.button("Next ➡", on_click=lambda: st.session_state.update(page=min(total_pages - 1, st.session_state.page + 1)), disabled=(st.session_state.page >= total_pages - 1))
 
 
-# ------------------ PDF REPORT GENERATION (WeasyPrint) ------------------
+# ------------------ PDF REPORT GENERATION ------------------
 st.markdown("---")
 st.header("📥 Export Report")
-st.info("""
-📄 **PDF Export Feature**  
-This feature requires additional system dependencies and is not available in the current environment.  
-It will be enabled in the production deployment on Streamlit Cloud.
-""")
+
+if not PDF_AVAILABLE:
+    st.info("📄 PDF export is not available in this environment (requires weasyprint).")
+elif len(filtered) == 0:
+    st.info("💡 Apply filters to analyze articles, then download a report.")
+else:
+    # Build HTML content
+    filters_html = f"""
+    <div style="background:#f8f9fa;padding:10px;border-radius:5px;margin:15px 0;">
+        <p><b>Filters:</b> Actor: {selected_actor} | Country: {selected_country} | Intent: {selected_intent_ui} | Tone: {selected_tone}</p>
+        <p><b>Total Articles Analyzed:</b> {len(filtered)}</p>
+    </div>
+    """
+
+    # Executive summary
+    intents = filtered['strategic_intent'].value_counts().head(3)
+    actors = filtered['inferred_actor'].value_counts().head(3)
+    tone = filtered['tone_numeric'].mean() if 'tone_numeric' in filtered.columns else 0
+    tone_desc = "neutral" if abs(tone) < 0.2 else ("positive" if tone > 0 else "negative")
+    top_intents = ", ".join([f"{i} ({c})" for i, c in intents.items()]) if not intents.empty else "none"
+    top_actors = ", ".join([f"{a} ({c})" for a, c in actors.items()]) if not actors.empty else "none"
+    summary_html = f"""
+    <p>During this period, a total of {len(filtered)} articles were analyzed. The dominant strategic narratives 
+    include {top_intents}. The primary foreign actors covered are {top_actors}. 
+    The overall media tone is {tone_desc} (average tone score: {tone:.2f}).</p>
+    """
+
+    # Country breakdown
+    country_html = ""
+    if selected_actor != "All" and 'selected_vuln_key_for_score' in locals() and selected_vuln_key_for_score:
+        for country in VULN_COUNTRIES:
+            if selected_country == "All" or selected_country == country:
+                c_df = filtered[filtered['target_country'] == country]
+                score = get_influence_baseline_score(selected_actor, country, selected_vuln_key_for_score)
+                intents_country = c_df['strategic_intent'].value_counts().head(2)
+                intent_list = ", ".join(intents_country.index) if not intents_country.empty else "various"
+                country_html += f"""
+                <div style="background:#f8f9fa;padding:12px;margin:12px 0;border-left:4px solid #3498db;">
+                    <b>{country}</b>: {len(c_df)} articles | Vulnerability Score: {score:.2f}<br>
+                    Key narratives: {intent_list}
+                </div>
+                """
+
+    # Final HTML
+    full_html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <style>
+            body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 40px; line-height: 1.6; color: #333; }}
+            .header {{ text-align: center; margin-bottom: 30px; }}
+            .logo {{ width: 200px; }}
+            h1 {{ color: #2c3e50; margin-bottom: 10px; }}
+            h2 {{ color: #34495e; margin-top: 30px; border-bottom: 1px solid #eee; padding-bottom: 5px; }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <img src="https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/main/CFA_Logo.png" class="logo" alt="Code for Africa">
+            <h1>Media Narratives Monitoring Report</h1>
+            <p><i>Generated on {pd.Timestamp.now().strftime('%Y-%m-%d')}</i></p>
+        </div>
+
+        {filters_html}
+        <h2>Executive Summary</h2>
+        {summary_html}
+
+        <h2>Country-Specific Analysis</h2>
+        {country_html if country_html else "<p>No country-specific data available.</p>"}
+
+        <p><i>This report was generated using the Code for Africa Media Narratives Monitoring Dashboard.</i></p>
+    </body>
+    </html>
+    """
+
+    # Generate PDF
+    try:
+        pdf_bytes = HTML(string=full_html).write_pdf()
+        st.download_button(
+            label="📄 Download Report as PDF",
+            data=pdf_bytes,
+            file_name="media_narratives_report.pdf",
+            mime="application/pdf"
+        )
+    except Exception as e:
+        st.error("Failed to generate PDF.")
+        st.caption(f"Error: {str(e)}")
