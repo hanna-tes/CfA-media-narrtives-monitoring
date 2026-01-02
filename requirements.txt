@@ -6,3 +6,4 @@ lxml
 groq
 plotly
 weasyprint==62.10
+pdfkit 
