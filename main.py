@@ -478,170 +478,96 @@ with col3:
     st.button("Next ➡", on_click=lambda: st.session_state.update(page=min(total_pages - 1, st.session_state.page + 1)), disabled=(st.session_state.page >= total_pages - 1))
 
 
-# ------------------ PDF REPORT GENERATION ------------------
+# ------------------ PDF REPORT GENERATION (WeasyPrint) ------------------
 st.markdown("---")
 st.header("📥 Export Report")
 
-# Helper: Convert Plotly fig to base64 PNG (for embedding in HTML)
-def fig_to_base64(fig):
-    img_bytes = fig.to_image(format="png", width=800, height=400)
-    return f"data:image/png;base64,{base64.b64encode(img_bytes).decode()}"
-
-# Function to generate PDF content (returns bytes)
-@st.cache_data
-def generate_pdf_report(
-    filtered_df, 
-    selected_actor, 
-    selected_country, 
-    selected_intent_ui, 
-    selected_tone,
-    selected_vuln_key_for_score,
-    VULN_COUNTRIES
-):
-    # Reconstruct charts
-    ts_chart_b64 = ""
-    if 'posting_time' in filtered_df.columns and not filtered_df.empty:
-        try:
-            df_ts = filtered_df.copy()
-            df_ts['posting_time'] = pd.to_datetime(df_ts['posting_time'], errors='coerce')
-            df_ts = df_ts.dropna(subset=['posting_time'])
-            ts_data = df_ts.resample('D', on='posting_time')['URL'].count().reset_index()
-            ts_data.columns = ['Date', 'Article Count']
-            fig_ts = px.line(ts_data, x='Date', y='Article Count', title="Daily Article Volume")
-            fig_ts.update_layout(template="plotly_white", title_x=0.5)
-            ts_chart_b64 = fig_to_base64(fig_ts)
-        except:
-            ts_chart_b64 = ""
-
-    heat_chart_b64 = ""
-    if selected_actor != "All" and selected_vuln_key_for_score:
-        try:
-            heatmap_data = []
-            for c in VULN_COUNTRIES:
-                score = get_influence_baseline_score(selected_actor, c, selected_vuln_key_for_score)
-                heatmap_data.append({"Country": c, "Vulnerability": score})
-            df_heat = pd.DataFrame(heatmap_data)
-            fig_heat = px.bar(df_heat, x="Country", y="Vulnerability", title="Country Vulnerability Comparison", range_y=[0,1])
-            fig_heat.update_layout(template="plotly_white", title_x=0.5)
-            heat_chart_b64 = fig_to_base64(fig_heat)
-        except:
-            heat_chart_b64 = ""
-
-    # Generate summary
-    def generate_overall_summary(df):
-        if df.empty:
-            return "No articles available."
-        intents = df['strategic_intent'].value_counts().head(3)
-        actors = df['inferred_actor'].value_counts().head(3)
-        tone = df['tone_numeric'].mean() if 'tone_numeric' in df.columns else 0
-        tone_desc = "neutral" if abs(tone) < 0.2 else ("positive" if tone > 0 else "negative")
-        top_intents = ", ".join([f"{i} ({c})" for i, c in intents.items()])
-        top_actors = ", ".join([f"{a} ({c})" for a, c in actors.items()])
-        return f"""
-        During this period, a total of {len(df)} articles were analyzed. The dominant strategic narratives 
-        include {top_intents}. The primary foreign actors covered are {top_actors}. 
-        The overall media tone is {tone_desc} (average tone score: {tone:.2f}).
-        """
-
-    overall_summary = generate_overall_summary(filtered_df)
-
-    country_summaries = ""
-    if selected_actor != "All" and selected_vuln_key_for_score:
-        for country in VULN_COUNTRIES:
-            if selected_country == "All" or selected_country == country:
-                c_df = filtered_df[filtered_df['target_country'] == country]
-                score = get_influence_baseline_score(selected_actor, country, selected_vuln_key_for_score)
-                intents = c_df['strategic_intent'].value_counts().head(2)
-                intent_list = ", ".join(intents.index) if not intents.empty else "various"
-                country_summaries += f"""
-                <div class="country-summary">
-                    <b>{country}</b>: {len(c_df)} articles | Vulnerability Score: {score:.2f}<br>
-                    Key narratives: {intent_list}
-                </div>
-                """
-
-    # Build HTML
-    pdf_html = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <meta charset="utf-8">
-        <title>Media Narratives Summary Report</title>
-        <style>
-            body {{ font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }}
-            .header {{ text-align: center; margin-bottom: 30px; }}
-            .logo {{ width: 200px; }}
-            h1 {{ color: #2c3e50; margin-bottom: 10px; }}
-            h2 {{ color: #34495e; margin-top: 30px; border-bottom: 1px solid #eee; padding-bottom: 5px; }}
-            .filters {{ background: #f8f9fa; padding: 10px; border-radius: 5px; margin: 15px 0; }}
-            .country-summary {{ background: #f8f9fa; padding: 12px; margin: 12px 0; border-left: 4px solid #3498db; }}
-            .chart {{ text-align: center; margin: 25px 0; }}
-            .chart img {{ max-width: 100%; height: auto; }}
-        </style>
-    </head>
-    <body>
-        <div class="header">
-            <img src="https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/main/CFA_Logo.png" class="logo" alt="Code for Africa">
-            <h1>Media Narratives Monitoring Report</h1>
-            <p><i>Generated on {pd.Timestamp.now().strftime('%Y-%m-%d')}</i></p>
-        </div>
-
-        <div class="filters">
-            <p><b>Filters:</b> Actor: {selected_actor} | Country: {selected_country} | Intent: {selected_intent_ui} | Tone: {selected_tone}</p>
-            <p><b>Total Articles Analyzed:</b> {len(filtered_df)}</p>
-        </div>
-
-        <h2>Executive Summary</h2>
-        <p>{overall_summary}</p>
-
-        <h2>Key Visual Insights</h2>
-        {"<div class='chart'><img src='" + ts_chart_b64 + "'></div>" if ts_chart_b64 else ""}
-        {"<div class='chart'><img src='" + heat_chart_b64 + "'></div>" if heat_chart_b64 else ""}
-
-        <h2>Country-Specific Analysis</h2>
-        {country_summaries if country_summaries else "<p>No country-specific data available.</p>"}
-
-        <p><i>This report was generated using the Code for Africa Media Narratives Monitoring Dashboard.</i></p>
-    </body>
-    </html>
-    """
-
-    # Convert to PDF
-    try:
-        options = {
-            'page-size': 'A4',
-            'margin-top': '0.75in',
-            'margin-right': '0.75in',
-            'margin-bottom': '0.75in',
-            'margin-left': '0.75in',
-            'encoding': "UTF-8",
-            'no-outline': None
-        }
-        pdf_bytes = pdfkit.from_string(pdf_html, False, options=options)
-        return pdf_bytes
-    except Exception as e:
-        raise e
-
-# Only show download button if filtered data exists
-if len(filtered) > 0:
-    try:
-        pdf_bytes = generate_pdf_report(
-            filtered,
-            selected_actor,
-            selected_country,
-            selected_intent_ui,
-            selected_tone,
-            selected_vuln_key_for_score if selected_intent_ui != "All" else None,
-            VULN_COUNTRIES
-        )
-        st.download_button(
-            label="📄 Download Report as PDF",
-            data=pdf_bytes,
-            file_name="media_narratives_report.pdf",
-            mime="application/pdf"
-        )
-    except Exception as e:
-        st.error("⚠️ PDF generation failed. This feature requires `wkhtmltopdf`.")
-        st.caption(f"Error: {str(e)}")
+if not WEASYPRINT_AVAILABLE:
+    st.info("📄 PDF export is not available in this environment.")
 else:
-    st.info("💡 Apply filters to analyze articles, then download a report.")
+    if len(filtered) == 0:
+        st.info("💡 Apply filters to analyze articles, then download a report.")
+    else:
+        with st.spinner("Generating PDF report..."):
+            # Build HTML content
+            filters_html = f"""
+            <div style="background:#f8f9fa;padding:10px;border-radius:5px;margin:15px 0;">
+                <p><b>Filters:</b> Actor: {selected_actor} | Country: {selected_country} | Intent: {selected_intent_ui} | Tone: {selected_tone}</p>
+                <p><b>Total Articles Analyzed:</b> {len(filtered)}</p>
+            </div>
+            """
+
+            # Executive summary
+            intents = filtered['strategic_intent'].value_counts().head(3)
+            actors = filtered['inferred_actor'].value_counts().head(3)
+            tone = filtered['tone_numeric'].mean() if 'tone_numeric' in filtered.columns else 0
+            tone_desc = "neutral" if abs(tone) < 0.2 else ("positive" if tone > 0 else "negative")
+            top_intents = ", ".join([f"{i} ({c})" for i, c in intents.items()]) if not intents.empty else "none"
+            top_actors = ", ".join([f"{a} ({c})" for a, c in actors.items()]) if not actors.empty else "none"
+            summary_html = f"""
+            <p>During this period, a total of {len(filtered)} articles were analyzed. The dominant strategic narratives 
+            include {top_intents}. The primary foreign actors covered are {top_actors}. 
+            The overall media tone is {tone_desc} (average tone score: {tone:.2f}).</p>
+            """
+
+            # Country breakdown
+            country_html = ""
+            if selected_actor != "All" and 'selected_vuln_key_for_score' in locals() and selected_vuln_key_for_score:
+                for country in VULN_COUNTRIES:
+                    if selected_country == "All" or selected_country == country:
+                        c_df = filtered[filtered['target_country'] == country]
+                        score = get_influence_baseline_score(selected_actor, country, selected_vuln_key_for_score)
+                        intents_country = c_df['strategic_intent'].value_counts().head(2)
+                        intent_list = ", ".join(intents_country.index) if not intents_country.empty else "various"
+                        country_html += f"""
+                        <div style="background:#f8f9fa;padding:12px;margin:12px 0;border-left:4px solid #3498db;">
+                            <b>{country}</b>: {len(c_df)} articles | Vulnerability Score: {score:.2f}<br>
+                            Key narratives: {intent_list}
+                        </div>
+                        """
+
+            # Final HTML
+            full_html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <meta charset="utf-8">
+                <style>
+                    body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 40px; line-height: 1.6; color: #333; }}
+                    .header {{ text-align: center; margin-bottom: 30px; }}
+                    .logo {{ width: 200px; }}
+                    h1 {{ color: #2c3e50; margin-bottom: 10px; }}
+                    h2 {{ color: #34495e; margin-top: 30px; border-bottom: 1px solid #eee; padding-bottom: 5px; }}
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <img src="https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/main/CFA_Logo.png" class="logo" alt="Code for Africa">
+                    <h1>Media Narratives Monitoring Report</h1>
+                    <p><i>Generated on {pd.Timestamp.now().strftime('%Y-%m-%d')}</i></p>
+                </div>
+
+                {filters_html}
+                <h2>Executive Summary</h2>
+                {summary_html}
+
+                <h2>Country-Specific Analysis</h2>
+                {country_html if country_html else "<p>No country-specific data available.</p>"}
+
+                <p><i>This report was generated using the Code for Africa Media Narratives Monitoring Dashboard.</i></p>
+            </body>
+            </html>
+            """
+
+            # Convert to PDF
+            try:
+                pdf_bytes = HTML(string=full_html).write_pdf()
+                st.download_button(
+                    label="📄 Download Report as PDF",
+                    data=pdf_bytes,
+                    file_name="media_narratives_report.pdf",
+                    mime="application/pdf"
+                )
+            except Exception as e:
+                st.error("Failed to generate PDF.")
+                st.write(f"Error: {e}")
