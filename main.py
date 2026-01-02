@@ -477,7 +477,6 @@ with col3:
 
 
 # ------------------ PDF REPORT GENERATION (WeasyPrint) ------------------
-# ------------------ PDF REPORT GENERATION (NOT AVAILABLE) ------------------
 st.markdown("---")
 st.header("📥 Export Report")
 st.info("""
@@ -485,21 +484,6 @@ st.info("""
 This feature requires additional system dependencies and is not available in the current environment.  
 It will be enabled in the production deployment on Streamlit Cloud.
 """)
-
-if not WEASYPRINT_AVAILABLE:
-    st.info("📄 PDF export is not available in this environment.")
-else:
-    if len(filtered) == 0:
-        st.info("💡 Apply filters to analyze articles, then download a report.")
-    else:
-        with st.spinner("Generating PDF report..."):
-            # Build HTML content
-            filters_html = f"""
-            <div style="background:#f8f9fa;padding:10px;border-radius:5px;margin:15px 0;">
-                <p><b>Filters:</b> Actor: {selected_actor} | Country: {selected_country} | Intent: {selected_intent_ui} | Tone: {selected_tone}</p>
-                <p><b>Total Articles Analyzed:</b> {len(filtered)}</p>
-            </div>
-            """
 
             # Executive summary
             intents = filtered['strategic_intent'].value_counts().head(3)
