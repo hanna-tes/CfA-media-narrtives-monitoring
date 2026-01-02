@@ -4,6 +4,9 @@ import plotly.express as px
 import re
 import numpy as np 
 from urllib.parse import urlparse, urljoin
+import pdfkit
+import base64
+from io import BytesIO
 
 # NOTE: The following libraries are REQUIRED for the real scraping logic provided by the user.
 # If running in a restricted environment (like a code interpreter), these operations will fail.
@@ -165,7 +168,7 @@ def get_influence_baseline_score(actor, country, intent_key):
 
 # --- STREAMLIT APP LAYOUT ---
 
-# ✅ New_BACKGROUND_URL and BRIGHT_LOGO_URL
+# ✅ FIXED: Removed trailing spaces in URLs
 NEW_BACKGROUND_URL = "https://media.istockphoto.com/id/1502033887/vector/beige-gray-grainy-gradient-background-poster-backdrop-noise-texture-webpage-header-wide.jpg?s=612x612&w=0&k=20&c=eGwiA8zZ4cobGeMz5QeRs5zKzlp1Rr-BcROwT4S22y0="
 BRIGHT_LOGO_URL = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/main/CFA_Logo.png"
 
@@ -473,3 +476,136 @@ with col2:
     st.markdown(f"<h5 style='text-align: center;'>Page {st.session_state.page + 1} of {total_pages}</h5>", unsafe_allow_html=True)
 with col3:
     st.button("Next ➡", on_click=lambda: st.session_state.update(page=min(total_pages - 1, st.session_state.page + 1)), disabled=(st.session_state.page >= total_pages - 1))
+
+
+# ------------------ PDF REPORT GENERATION (NEW SECTION) ------------------
+st.markdown("---")
+st.header("📥 Export Report")
+
+# Helper: Convert Plotly fig to base64 PNG
+def fig_to_base64(fig):
+    img_bytes = fig.to_image(format="png", width=800, height=400)
+    return f"data:image/png;base64,{base64.b64encode(img_bytes).decode()}"
+
+# Generate charts for PDF
+ts_chart_b64 = ""
+if 'posting_time' in filtered.columns and not filtered.empty:
+    filtered_ts = filtered.copy()
+    filtered_ts['posting_time'] = pd.to_datetime(filtered_ts['posting_time'], errors='coerce')
+    filtered_ts = filtered_ts.dropna(subset=['posting_time'])
+    ts_data = filtered_ts.resample('D', on='posting_time')['URL'].count().reset_index()
+    ts_data.columns = ['Date', 'Article Count']
+    fig_ts = px.line(ts_data, x='Date', y='Article Count', title="Daily Article Volume")
+    fig_ts.update_layout(template="plotly_white", title_x=0.5)
+    ts_chart_b64 = fig_to_base64(fig_ts)
+
+heat_chart_b64 = ""
+if selected_actor != "All" and selected_vuln_key_for_score:
+    heatmap_data = [{"Country": c, "Vulnerability": get_influence_baseline_score(selected_actor, c, selected_vuln_key_for_score)} for c in VULN_COUNTRIES]
+    df_heat = pd.DataFrame(heatmap_data)
+    fig_heat = px.bar(df_heat, x="Country", y="Vulnerability", title="Country Vulnerability Comparison", range_y=[0,1])
+    fig_heat.update_layout(template="plotly_white", title_x=0.5)
+    heat_chart_b64 = fig_to_base64(fig_heat)
+
+# Auto-generated narrative summary
+def generate_overall_summary(df):
+    if df.empty:
+        return "No articles available."
+    intents = df['strategic_intent'].value_counts().head(3)
+    actors = df['inferred_actor'].value_counts().head(3)
+    tone = df['tone_numeric'].mean() if 'tone_numeric' in df.columns else 0
+    tone_desc = "neutral" if abs(tone) < 0.2 else ("positive" if tone > 0 else "negative")
+    top_intents = ", ".join([f"{i} ({c})" for i, c in intents.items()])
+    top_actors = ", ".join([f"{a} ({c})" for a, c in actors.items()])
+    return f"""
+    During this period, a total of {len(df)} articles were analyzed. The dominant strategic narratives 
+    include {top_intents}. The primary foreign actors covered are {top_actors}. 
+    The overall media tone is {tone_desc} (average tone score: {tone:.2f}).
+    """
+
+overall_summary = generate_overall_summary(filtered)
+
+# Country-specific summaries
+country_summaries = ""
+if selected_actor != "All" and selected_vuln_key_for_score:
+    for country in VULN_COUNTRIES:
+        if selected_country == "All" or selected_country == country:
+            c_df = filtered[filtered['target_country'] == country]
+            score = get_influence_baseline_score(selected_actor, country, selected_vuln_key_for_score)
+            intents = c_df['strategic_intent'].value_counts().head(2)
+            intent_list = ", ".join(intents.index) if not intents.empty else "various"
+            country_summaries += f"""
+            <div class="country-summary">
+                <b>{country}</b>: {len(c_df)} articles | Vulnerability Score: {score:.2f}<br>
+                Key narratives: {intent_list}
+            </div>
+            """
+
+# PDF HTML Template
+pdf_html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Media Naratives Summary Report</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 40px; line-height: 1.6; }}
+        .header {{ text-align: center; margin-bottom: 30px; }}
+        .logo {{ width: 200px; }}
+        h1 {{ color: #2c3e50; margin-bottom: 10px; }}
+        h2 {{ color: #34495e; margin-top: 30px; border-bottom: 1px solid #eee; padding-bottom: 5px; }}
+        .filters {{ background: #f8f9fa; padding: 10px; border-radius: 5px; margin: 15px 0; }}
+        .country-summary {{ background: #f8f9fa; padding: 12px; margin: 12px 0; border-left: 4px solid #3498db; }}
+        .chart {{ text-align: center; margin: 25px 0; }}
+        .chart img {{ max-width: 100%; height: auto; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <img src="https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/main/CFA_Logo.png" class="logo" alt="Code for Africa">
+        <h1>Media Narratives Monitoring Report</h1>
+        <p><i>Generated on {pd.Timestamp.now().strftime('%Y-%m-%d')}</i></p>
+    </div>
+
+    <div class="filters">
+        <p><b>Filters:</b> Actor: {selected_actor} | Country: {selected_country} | Intent: {selected_intent_ui} | Tone: {selected_tone}</p>
+        <p><b>Total Articles Analyzed:</b> {len(filtered)}</p>
+    </div>
+
+    <h2>Executive Summary</h2>
+    <p>{overall_summary}</p>
+
+    <h2>Key Visual Insights</h2>
+    {"<div class='chart'><img src='" + ts_chart_b64 + "'></div>" if ts_chart_b64 else ""}
+    {"<div class='chart'><img src='" + heat_chart_b64 + "'></div>" if heat_chart_b64 else ""}
+
+    <h2>Country-Specific Analysis</h2>
+    {country_summaries if country_summaries else "<p>No country-specific data available.</p>"}
+
+    <p><i>This report was generated using the Code for Africa Media Narratives Monitoring Dashboard.</i></p>
+</body>
+</html>
+"""
+
+# Generate and offer PDF download
+if st.button("📥 Download Report as PDF"):
+    try:
+        options = {
+            'page-size': 'A4',
+            'margin-top': '0.75in',
+            'margin-right': '0.75in',
+            'margin-bottom': '0.75in',
+            'margin-left': '0.75in',
+            'encoding': "UTF-8",
+            'no-outline': None
+        }
+        pdf_bytes = pdfkit.from_string(pdf_html, False, options=options)
+        st.download_button(
+            label="📄 Click to Download PDF Report",
+            data=pdf_bytes,
+            file_name="media_narratives_report.pdf",
+            mime="application/pdf"
+        )
+    except Exception as e:
+        st.error("Failed to generate PDF. Ensure wkhtmltopdf is installed.")
+        st.write(f"Error: {str(e)}")
