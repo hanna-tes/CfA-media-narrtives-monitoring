@@ -8,6 +8,18 @@ import time
 import random
 import re
 from math import isfinite
+import unicodedata  
+
+#  Text cleaning function
+def clean_article_text(text):
+    if not isinstance(text, str) or not text.strip():
+        return ""
+    text = "".join(ch for ch in text if unicodedata.category(ch)[0] != "C")
+    text = unicodedata.normalize("NFKD", text)
+    text = text.encode("ascii", "ignore").decode("ascii")
+    text = re.sub(r"\xa0", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
 
 # ==================== LLM CLIENT ====================
 client = None
@@ -70,7 +82,9 @@ def fetch_content_with_retry(url, fetch_type="snippet", retries=3, delay=1):
                     paras = content_container.find_all('p')
                     full_text = ' '.join([p.get_text(strip=True) for p in paras])
                     if len(full_text) > 50:
-                        return full_text[:3000]
+                        full_text = full_text[:3000]
+                        full_text = clean_article_text(full_text)  # ✅ ADDED
+                        return full_text
                 return "No meaningful content found."
 
             elif fetch_type == "image":
@@ -117,6 +131,7 @@ def load_raw_data():
             pd.to_datetime(df['posting_time'], format="%Y-%m-%d %H:%M:%S", errors='coerce')
             .fillna(pd.to_datetime(df['posting_time'], format="%d/%m/%Y %H:%M", errors='coerce'))
         )
+        df['article_text'] = df['article_text'].astype(str).apply(clean_article_text)  # ✅ ADDED
         df['scraped_content'] = df['article_text']
         return df
     except Exception as e:
@@ -194,9 +209,9 @@ def enrich_with_scraping_and_llm(df, progress_callback=None):
             if not is_valid_image_url(img_url):
                 try:
                     domain = urlparse(url).netloc.replace('www.', '')
-                    img_url = f"https://logo.clearbit.com/{domain}"  # ✅ No trailing space!
+                    img_url = f"https://logo.clearbit.com/  {domain}"  # ✅ No trailing space!
                 except Exception:
-                    img_url = 'https://placehold.co/400x200/cccccc/000000?text=No+Image'
+                    img_url = 'https://placehold.co/400x200/cccccc/000000?text=No+Image  '
             scraped_image[url] = img_url
 
         if progress_callback:
@@ -205,7 +220,7 @@ def enrich_with_scraping_and_llm(df, progress_callback=None):
     # ✅ Use NEW COLUMN for summaries
     df['generated_summary'] = df['URL'].map(scraped_summary).fillna("No summary available.")
     df['scraped_content'] = df['URL'].map(scraped_content).fillna(df['scraped_content'])
-    df['urlToImage'] = df['URL'].map(scraped_image).fillna('https://placehold.co/400x200/cccccc/000000?text=No+Image')
+    df['urlToImage'] = df['URL'].map(scraped_image).fillna('https://placehold.co/400x200/cccccc/000000?text=No+Image  ')
 
     return df
 
@@ -317,7 +332,7 @@ ACTOR_ELEC = {
     "NonState": {"Senegal":0.02, "DRC":0.10, "CoteIvoire":0.05, "Ethiopia":0.30},
     "Saudi": {"Senegal":0.05, "DRC":0.01, "CoteIvoire":0.01, "Ethiopia":0.20},
     "UAE": {"Senegal":0.05, "DRC":0.02, "CoteIvoire":0.02, "Ethiopia":0.50},
-    "Turkey": {"Senegal":0.02, "DRC":0.02, "CoteIvoire":0.02, "Ethiopia":0.20},
+    "Turkey": {"Senegal":0.02, "DRC":0.02, "CoteIvoire":0.02, "ethiopia":0.20},
     "Israel": {"Senegal":0.03, "DRC":0.02, "CoteIvoire":0.02, "Ethiopia":0.30},
     "Iran": {"Senegal":0.02, "DRC":0.02, "CoteIvoire":0.02, "Ethiopia":0.02},
 }
