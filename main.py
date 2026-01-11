@@ -268,6 +268,11 @@ h1, h2, h3, h4, h5, h6, .stAlert p, .stMarkdown, .stPlotlyChart .modebar {{
     margin-bottom: 2rem;
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }}
+/* --- Smaller font for status messages --- */
+.small-text {{
+    font-size: 0.85em;
+    color: #777;
+}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -277,66 +282,61 @@ st.set_page_config(page_title="Vulnerability Index Tool", layout="wide")
 st.image(BRIGHT_LOGO_URL, width=150)
 st.title("🌍 Vulnerability Index Tool")
 
-# --- CHATBOT SECTION (Moved to the top) ---
-st.header("🤖 Ask Insights from the Dashboard Data")
+# --- LOAD DATA FIRST ---
+# Load base data
+with st.spinner("Loading dataset..."):
+    df_base = load_and_transform_data()
+if df_base.empty:
+    st.stop()
 
-# Initialize the search engine using session state to persist it across runs
-# IMPORTANT: This must be done AFTER df is created and processed by create_display_text
-# Therefore, we put the initialization logic AFTER the data loading blocks below,
-# but the chat UI itself can be defined here.
-# We'll use a placeholder or a conditional render until the search engine is ready.
+# Enrich with scraping
+with st.spinner("Enriching articles (Scraping Images)..."):
+    progress_bar = st.progress(0)
+    status_text = st.empty()
+    def progress_callback(p, msg):
+        progress_bar.progress(min(p, 1.0))
+        status_text.text(msg)
+    df = enrich_with_scraping_and_llm(df_base, progress_callback=progress_callback)
+progress_bar.empty()
+status_text.empty()
 
-# Check if search engine is initialized
+# ------------------ CREATE DISPLAY TEXT FROM article_text ------------------
+def create_display_text(df_in):
+    df_out = df_in.copy()
+    
+    def extract_summary_and_headline(text):
+        if not isinstance(text, str) or not text.strip() or "No summary available" in text:
+            return "Summary not available.", "No Headline"
+        sentences = [s.strip() for s in re.split(r'[.!?]+', text) if s.strip()]
+        if not sentences:
+            return text[:100] + "...", "Article Snippet"
+        headline = sentences[0] + "."
+        summary = headline + " " + sentences[1] + "." if len(sentences) > 1 else headline
+        return summary, headline
+
+    results = df_out['article_text'].apply(extract_summary_and_headline)
+    df_out['llm_summary'] = [r[0] for r in results]
+    df_out['display_headline'] = [r[1] for r in results]
+    return df_out
+
+df = create_display_text(df)
+
+# --- INITIALIZE SEARCH ENGINE AFTER DATA LOADING ---
+# This happens once per session where the app starts fresh or session state is cleared
 if 'search_engine' not in st.session_state:
-    st.info("Loading Search Engine and Data... Please wait.")
-    # Data loading and processing blocks go here (as before)
-    with st.spinner("Loading dataset..."):
-        df_base = load_and_transform_data()
-    if df_base.empty:
-        st.stop()
-
-    with st.spinner("Enriching articles (Scraping Images)..."):
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        def progress_callback(p, msg):
-            progress_bar.progress(min(p, 1.0))
-            status_text.text(msg)
-        df = enrich_with_scraping_and_llm(df_base, progress_callback=progress_callback)
-    progress_bar.empty()
-    status_text.empty()
-
-    # Process text
-    def create_display_text(df_in):
-        df_out = df_in.copy()
-        
-        def extract_summary_and_headline(text):
-            if not isinstance(text, str) or not text.strip() or "No summary available" in text:
-                return "Summary not available.", "No Headline"
-            sentences = [s.strip() for s in re.split(r'[.!?]+', text) if s.strip()]
-            if not sentences:
-                return text[:100] + "...", "Article Snippet"
-            headline = sentences[0] + "."
-            summary = headline + " " + sentences[1] + "." if len(sentences) > 1 else headline
-            return summary, headline
-
-        results = df_out['article_text'].apply(extract_summary_and_headline)
-        df_out['llm_summary'] = [r[0] for r in results]
-        df_out['display_headline'] = [r[1] for r in results]
-        return df_out
-
-    df = create_display_text(df)
-
-    # Now initialize the search engine with the processed 'df'
     with st.spinner("Initializing Search Engine... This might take a moment."):
         try:
             # PASS THE 'df' VARIABLE HERE - it should be the final processed 'df' from main.py
             st.session_state.search_engine = initialize_search_engine(df, force_rebuild=False) # <-- Corrected line
-            st.success("Search Engine Ready!")
+            # st.success("Search Engine Ready!") # Hide this message
         except Exception as e:
             st.error(f"Error initializing search engine: {e}")
             st.stop() # Stop execution if initialization fails
 
-# At this point, search engine should be ready
+# --- CHATBOT SECTION (Moved to the top) ---
+st.header("🤖 Ask Insights from the Dashboard Data")
+
+# Check if search engine is initialized (it should be now if we got here)
 if 'search_engine' in st.session_state:
     # Initialize chat history in session state if not present
     if "messages" not in st.session_state:
