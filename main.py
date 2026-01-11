@@ -90,6 +90,9 @@ from data_loader import (
     ACTORS as VULN_ACTORS
 )
 
+# --- IMPORT FROM SEARCH_ENGINE (for chatbot) ---
+from search_engine import initialize_search_engine, HybridSearchEngine
+
 # --- NAME MAPPING ---
 ACTOR_MAP = {
     "France": "France",
@@ -171,8 +174,8 @@ def get_influence_baseline_score(actor, country, intent_key):
 # --- STREAMLIT APP LAYOUT ---
 
 # ✅ FIXED: Removed trailing spaces in URLs
-NEW_BACKGROUND_URL = "https://media.istockphoto.com/id/1502033887/vector/beige-gray-grainy-gradient-background-poster-backdrop-noise-texture-webpage-header-wide.jpg?s=612x612&w=0&k=20&c=eGwiA8zZ4cobGeMz5QeRs5zKzlp1Rr-BcROwT4S22y0="
-BRIGHT_LOGO_URL = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/main/CFA_Logo.png"
+NEW_BACKGROUND_URL = "https://media.istockphoto.com/id/1502033887/vector/beige-gray-grainy-gradient-background-poster-backdrop-noise-texture-webpage-header-wide.jpg?s=612x612&w=0&k=20&c=eGwiA8zZ4cobGeMz5QeRs5zKzlp1Rr-BcROwT4S22y0=  "
+BRIGHT_LOGO_URL = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/main/CFA_Logo.png  "
 
 st.markdown(f"""
 <style>
@@ -254,6 +257,17 @@ h1, h2, h3, h4, h5, h6, .stAlert p, .stMarkdown, .stPlotlyChart .modebar {{
     color: #60a5fa;
     text-decoration: underline;
 }}
+
+/* --- Chat Container Styling --- */
+.chat-container {{
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    padding: 1rem;
+    background-color: rgba(255, 255, 255, 0.8); /* Slightly transparent white */
+    margin-top: 1rem;
+    margin-bottom: 2rem;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -263,45 +277,149 @@ st.set_page_config(page_title="Vulnerability Index Tool", layout="wide")
 st.image(BRIGHT_LOGO_URL, width=150)
 st.title("🌍 Vulnerability Index Tool")
 
-# Load base data
-with st.spinner("Loading dataset..."):
-    df_base = load_and_transform_data()
-if df_base.empty:
-    st.stop()
+# --- CHATBOT SECTION (Moved to the top) ---
+st.header("🤖 Ask Insights from the Dashboard Data")
 
-# Enrich with scraping
-with st.spinner("Enriching articles (Scraping Images)..."):
-    progress_bar = st.progress(0)
-    status_text = st.empty()
-    def progress_callback(p, msg):
-        progress_bar.progress(min(p, 1.0))
-        status_text.text(msg)
-    df = enrich_with_scraping_and_llm(df_base, progress_callback=progress_callback)
-progress_bar.empty()
-status_text.empty()
+# Initialize the search engine using session state to persist it across runs
+# IMPORTANT: This must be done AFTER df is created and processed by create_display_text
+# Therefore, we put the initialization logic AFTER the data loading blocks below,
+# but the chat UI itself can be defined here.
+# We'll use a placeholder or a conditional render until the search engine is ready.
 
-# ------------------ CREATE DISPLAY TEXT FROM article_text ------------------
-def create_display_text(df_in):
-    df_out = df_in.copy()
-    
-    def extract_summary_and_headline(text):
-        if not isinstance(text, str) or not text.strip() or "No summary available" in text:
-            return "Summary not available.", "No Headline"
-        sentences = [s.strip() for s in re.split(r'[.!?]+', text) if s.strip()]
-        if not sentences:
-            return text[:100] + "...", "Article Snippet"
-        headline = sentences[0] + "."
-        summary = headline + " " + sentences[1] + "." if len(sentences) > 1 else headline
-        return summary, headline
+# Check if search engine is initialized
+if 'search_engine' not in st.session_state:
+    st.info("Loading Search Engine and Data... Please wait.")
+    # Data loading and processing blocks go here (as before)
+    with st.spinner("Loading dataset..."):
+        df_base = load_and_transform_data()
+    if df_base.empty:
+        st.stop()
 
-    results = df_out['article_text'].apply(extract_summary_and_headline)
-    df_out['llm_summary'] = [r[0] for r in results]
-    df_out['display_headline'] = [r[1] for r in results]
-    return df_out
+    with st.spinner("Enriching articles (Scraping Images)..."):
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        def progress_callback(p, msg):
+            progress_bar.progress(min(p, 1.0))
+            status_text.text(msg)
+        df = enrich_with_scraping_and_llm(df_base, progress_callback=progress_callback)
+    progress_bar.empty()
+    status_text.empty()
 
-df = create_display_text(df)
+    # Process text
+    def create_display_text(df_in):
+        df_out = df_in.copy()
+        
+        def extract_summary_and_headline(text):
+            if not isinstance(text, str) or not text.strip() or "No summary available" in text:
+                return "Summary not available.", "No Headline"
+            sentences = [s.strip() for s in re.split(r'[.!?]+', text) if s.strip()]
+            if not sentences:
+                return text[:100] + "...", "Article Snippet"
+            headline = sentences[0] + "."
+            summary = headline + " " + sentences[1] + "." if len(sentences) > 1 else headline
+            return summary, headline
 
-# Sidebar filters
+        results = df_out['article_text'].apply(extract_summary_and_headline)
+        df_out['llm_summary'] = [r[0] for r in results]
+        df_out['display_headline'] = [r[1] for r in results]
+        return df_out
+
+    df = create_display_text(df)
+
+    # Now initialize the search engine with the processed 'df'
+    with st.spinner("Initializing Search Engine... This might take a moment."):
+        try:
+            # PASS THE 'df' VARIABLE HERE - it should be the final processed 'df' from main.py
+            st.session_state.search_engine = initialize_search_engine(df, force_rebuild=False) # <-- Corrected line
+            st.success("Search Engine Ready!")
+        except Exception as e:
+            st.error(f"Error initializing search engine: {e}")
+            st.stop() # Stop execution if initialization fails
+
+# At this point, search engine should be ready
+if 'search_engine' in st.session_state:
+    # Initialize chat history in session state if not present
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
+
+    # Create a container for the chat interface
+    with st.container():
+        st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+        # Display chat messages from history on app rerun
+        for message in st.session_state.messages:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+        # Accept user input
+        if prompt := st.chat_input("Ask a question about the data..."):
+            # Add user message to chat history
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            # Display user message in chat message container
+            with st.chat_message("user"):
+                st.markdown(prompt)
+
+            # Display assistant response in chat message container
+            with st.chat_message("assistant"):
+                with st.spinner("Searching and analyzing..."):
+                    try:
+                        # Use the search engine to get context
+                        search_engine_instance: HybridSearchEngine = st.session_state.search_engine
+                        context_from_search = search_engine_instance.get_context_for_llm(prompt, top_k=5) # Adjust top_k as needed
+
+                        # --- LLM Interaction using Groq API ---
+                        from groq import Groq # Import the Groq client
+
+                        # Initialize the Groq client using the API key from Streamlit secrets
+                        client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+
+                        # Define the system prompt to set the LLM's role and instructions
+                        system_prompt = """
+                        You are an expert analyst explaining media narratives and vulnerability indices related to foreign influence in African countries.
+                        Your task is to analyze the provided context information and answer the user's query accurately and concisely.
+                        The context includes retrieved articles and potentially dashboard metrics related to the user's request.
+                        Provide clear, insightful explanations based solely on the information provided.
+                        If the context doesn't fully answer the query, say so clearly.
+                        Cite relevant articles from the retrieved list if possible.
+                        """
+
+                        # Prepare the messages for the LLM
+                        messages = [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": f"Context Information:\n{context_from_search}\n\nUser Query: '{prompt}'"}
+                        ]
+
+                        try:
+                            # Call the Groq API (using llama3/gemma models available on Groq)
+                            # Choose a model, e.g., 'llama3-8b-8192', 'gemma-7b-it', 'mixtral-8x7b-32768'
+                            chat_completion = client.chat.completions.create(
+                                messages=messages,
+                                model="llama3-8b-8192", # You can change this model name as needed
+                                temperature=0.3, # Adjust creativity (0.0 = deterministic, 1.0 = creative)
+                                max_tokens=1024, # Limit the length of the response
+                            )
+
+                            # Extract the response content from the API call
+                            llm_response = chat_completion.choices[0].message.content
+
+                        except Exception as api_error:
+                            # Handle potential API errors gracefully
+                            st.error(f"An error occurred with the Groq API: {api_error}")
+                            llm_response = f"Sorry, I encountered an issue processing your request with the AI model: {api_error}. Please try again."
+
+                        st.markdown(llm_response)
+                        # Add assistant response to chat history
+                        st.session_state.messages.append({"role": "assistant", "content": llm_response})
+
+                    except Exception as e:
+                        error_msg = f"An error occurred while processing your request: {e}"
+                        st.error(error_msg)
+                        # Optionally add error message to history
+                        st.session_state.messages.append({"role": "assistant", "content": error_msg})
+        st.markdown('</div>', unsafe_allow_html=True)
+
+# --- END CHATBOT SECTION ---
+
+# Sidebar filters (placed after chatbot if desired, or keep in sidebar)
 with st.sidebar:
     st.title("🔍 Filters")
     selected_media = st.selectbox("Media Outlet", ["All"] + get_media_names())
@@ -439,7 +557,7 @@ for _, row in page_articles.iterrows():
     summary_display = str(row.get('llm_summary', 'Summary extraction failed.'))
     headline = str(row.get('display_headline', 'Article Snippet (No Headline)'))
     image_url = str(row.get('urlToImage', ''))
-    display_image = image_url if image_url and image_url not in ['None', 'nan', ''] else 'https://placehold.co/400x200/cccccc/000000?text=No+Image'
+    display_image = image_url if image_url and image_url not in ['None', 'nan', ''] else 'https://placehold.co/400x200/cccccc/000000?text=No+Image  '
     media = str(row.get('media_outlet', 'Unknown'))
     tone = str(row.get('tone', 'N/A'))
     intent = str(row.get('strategic_intent', 'N/A'))
@@ -478,98 +596,3 @@ with col2:
     st.markdown(f"<h5 style='text-align: center;'>Page {st.session_state.page + 1} of {total_pages}</h5>", unsafe_allow_html=True)
 with col3:
     st.button("Next ➡", on_click=lambda: st.session_state.update(page=min(total_pages - 1, st.session_state.page + 1)), disabled=(st.session_state.page >= total_pages - 1))
-# --- ADD THIS SECTION TO main.py ---
-
-import streamlit as st
-# Import the search engine logic
-from search_engine import initialize_search_engine, HybridSearchEngine
-
-# Initialize the search engine using session state to persist it across runs
-if 'search_engine' not in st.session_state:
-    with st.spinner("Initializing Search Engine... This might take a moment."):
-        try:
-            st.session_state.search_engine = initialize_search_engine(force_rebuild=False) # Set to True only if you need to rebuild
-            st.success("Search Engine Ready!")
-        except Exception as e:
-            st.error(f"Error initializing search engine: {e}")
-            st.stop() # Stop execution if initialization fails
-
-# --- Chat Interface Section ---
-st.markdown("---") # Add a separator
-st.subheader("💬 Ask Insights from the Dashboard Data")
-st.caption("Example: \"Find articles about Economic Dependency by China in South Africa\" or \"Explain the current CII for Russia in Ethiopia.\"")
-
-# Initialize chat history in session state if not present
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-# Display chat messages from history on app rerun
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-# Accept user input
-if prompt := st.chat_input("Ask a question about the data..."):
-    # Add user message to chat history
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    # Display user message in chat message container
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-    # Display assistant response in chat message container
-    with st.chat_message("assistant"):
-        with st.spinner("Searching and analyzing..."):
-            try:
-                # Use the search engine to get context
-                search_engine_instance: HybridSearchEngine = st.session_state.search_engine
-                context_from_search = search_engine_instance.get_context_for_llm(prompt, top_k=5) # Adjust top_k as needed
-
-                # --- LLM Interaction using Groq API ---
-                from groq import Groq # Import the Groq client
-
-                # Initialize the Groq client using the API key from Streamlit secrets
-                client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-
-                # Define the system prompt to set the LLM's role and instructions
-                system_prompt = """
-                You are an expert analyst explaining media narratives and vulnerability indices related to foreign influence in African countries.
-                Your task is to analyze the provided context information and answer the user's query accurately and concisely.
-                The context includes retrieved articles and potentially dashboard metrics related to the user's request.
-                Provide clear, insightful explanations based solely on the information provided.
-                If the context doesn't fully answer the query, say so clearly.
-                Cite relevant articles from the retrieved list if possible.
-                """
-
-                # Prepare the messages for the LLM
-                messages = [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": f"Context Information:\n{context_from_search}\n\nUser Query: '{prompt}'"}
-                ]
-
-                try:
-                    # Call the Groq API (using llama3/gemma models available on Groq)
-                    # Choose a model, e.g., 'llama3-8b-8192', 'gemma-7b-it', 'mixtral-8x7b-32768'
-                    chat_completion = client.chat.completions.create(
-                        messages=messages,
-                        model="llama3-8b-8192", # You can change this model name as needed
-                        temperature=0.3, # Adjust creativity (0.0 = deterministic, 1.0 = creative)
-                        max_tokens=1024, # Limit the length of the response
-                    )
-
-                    # Extract the response content from the API call
-                    llm_response = chat_completion.choices[0].message.content
-
-                except Exception as api_error:
-                    # Handle potential API errors gracefully
-                    st.error(f"An error occurred with the Groq API: {api_error}")
-                    llm_response = f"Sorry, I encountered an issue processing your request with the AI model: {api_error}. Please try again."
-
-                st.markdown(llm_response)
-                # Add assistant response to chat history
-                st.session_state.messages.append({"role": "assistant", "content": llm_response})
-
-            except Exception as e:
-                error_msg = f"An error occurred while processing your request: {e}"
-                st.error(error_msg)
-                # Optionally add error message to history
-                st.session_state.messages.append({"role": "assistant", "content": error_msg})
