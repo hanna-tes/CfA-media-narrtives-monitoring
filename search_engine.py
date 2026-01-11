@@ -9,7 +9,8 @@ from sentence_transformers import SentenceTransformer
 import faiss  # Requires: pip install faiss-cpu (or faiss-gpu)
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
-from data_loader import load_and_transform_data # Assuming this loads your base data
+# Remove the direct import of data_loader as it's no longer used here
+# from data_loader import load_and_transform_data
 
 # --- Configuration ---
 # Choose your embedding model. 'all-MiniLM-L6-v2' is fast and decent for general text.
@@ -32,11 +33,18 @@ class HybridSearchEngine:
         Initializes the search engine, loading or building the vector index and TF-IDF model.
 
         Args:
-            df (pd.DataFrame): The main dataframe loaded by load_and_transform_data.
+            df (pd.DataFrame): The main dataframe loaded by load_and_transform_data in main.py.
                                It should contain columns like 'article_text', 'llm_summary',
                                'inferred_actor', 'target_country', 'strategic_intent', etc.
+                               This is the FINAL processed dataframe passed from main.py.
             force_rebuild (bool): If True, rebuilds the index even if saved files exist.
         """
+        # IMPORTANT: Ensure the incoming df has the required columns like 'llm_summary'
+        required_cols = ['article_text', 'llm_summary', 'inferred_actor', 'target_country', 'strategic_intent', 'sector', 'media_outlet', 'URL', 'display_headline', 'posting_time', 'confidence', 'tone']
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        if missing_cols:
+             raise ValueError(f"DataFrame is missing required columns for search: {missing_cols}")
+
         self.df = df.reset_index(drop=True) # Ensure consistent indexing
         self.model_name = EMBEDDING_MODEL_NAME
         self.model = SentenceTransformer(self.model_name)
@@ -71,17 +79,17 @@ class HybridSearchEngine:
         Creates the text corpus for indexing and extracts corresponding metadata rows.
 
         Args:
-            df (pd.DataFrame): The input dataframe.
+            df (pd.DataFrame): The input dataframe (from main.py).
 
         Returns:
             Tuple[List[str], pd.DataFrame]: The list of text strings for the corpus,
                                             and the corresponding metadata rows.
         """
         # Combine relevant text fields for searching
-        # Adjust column names based on your actual dataframe structure
+        # Ensure columns like 'llm_summary' and 'display_headline' exist in df before calling this
         text_parts = [
             df['article_text'].fillna('').astype(str),
-            df['llm_summary'].fillna('').astype(str),
+            df['llm_summary'].fillna('').astype(str), # This should now exist
             df['inferred_actor'].fillna('').astype(str),
             df['target_country'].fillna('').astype(str),
             df['strategic_intent'].fillna('').astype(str),
@@ -91,7 +99,8 @@ class HybridSearchEngine:
         ]
         # Join the parts with a separator
         corpus = [" ".join(parts) for parts in zip(*text_parts)]
-        metadata_df = df[['URL', 'display_headline', 'llm_summary', 'inferred_actor', 'target_country', 'strategic_intent', 'sector', 'media_outlet', 'posting_time', 'confidence', 'tone']].copy() # Select relevant metadata
+        # Select relevant metadata columns, ensuring 'llm_summary' and 'display_headline' are included
+        metadata_df = df[['URL', 'display_headline', 'llm_summary', 'inferred_actor', 'target_country', 'strategic_intent', 'sector', 'media_outlet', 'posting_time', 'confidence', 'tone']].copy()
         return corpus, metadata_df
 
     def _build_faiss_index(self, corpus: List[str]) -> faiss.Index:
@@ -266,6 +275,7 @@ class HybridSearchEngine:
         context_lines = ["Retrieved Articles:"]
         for idx, row in results_df.iterrows():
             # Format each article snippet for the LLM context
+            # Ensure 'llm_summary', 'display_headline', etc. are available in row
             snippet = (
                 f"- **Headline**: {row.get('display_headline', 'N/A')}\n"
                 f"  **Summary**: {row.get('llm_summary', 'N/A')[:200]}...\n" # Truncate summary for brevity
@@ -279,28 +289,35 @@ class HybridSearchEngine:
         return "\n".join(context_lines)
 
 
-# --- Optional: Standalone function to initialize the engine ---
-# This can be called from main.py after loading the dataframe
-def initialize_search_engine(force_rebuild: bool = False) -> HybridSearchEngine:
+# --- Modified: Standalone function to initialize the engine WITH a provided DataFrame ---
+def initialize_search_engine(df: pd.DataFrame, force_rebuild: bool = False) -> HybridSearchEngine:
     """
-    Loads the dataframe and initializes the search engine instance.
-    This function can be called once when the application starts.
+    Initializes the search engine instance using a provided dataframe.
+    This function should be called from main.py after the dataframe is fully processed.
+
+    Args:
+        df (pd.DataFrame): The processed dataframe from main.py, containing columns like
+                           'article_text', 'llm_summary', 'inferred_actor', etc.
+        force_rebuild (bool): If True, rebuilds the index even if saved files exist.
+
+    Returns:
+        HybridSearchEngine: An initialized instance of the search engine.
     """
-    logger.info("Initializing Search Engine...")
-    df = load_and_transform_data()
+    logger.info("Initializing Search Engine with provided DataFrame...")
     if df.empty:
-        raise ValueError("Failed to load data. Cannot initialize search engine.")
+        raise ValueError("Provided dataframe is empty. Cannot initialize search engine.")
     search_engine_instance = HybridSearchEngine(df, force_rebuild=force_rebuild)
     logger.info("Search Engine initialized successfully.")
     return search_engine_instance
 
 # Example usage (if running this script directly for testing):
 # if __name__ == "__main__":
-#     # Example: Rebuild index if needed
-#     # se = initialize_search_engine(force_rebuild=True)
-#     se = initialize_search_engine(force_rebuild=False)
-#     query = "economic dependency Russia Ethiopia"
-#     results = se.hybrid_search(query, top_k=3)
-#     print(results[['display_headline', 'combined_score']])
-#     context = se.get_context_for_llm(query, top_k=3)
-#     print("\n--- CONTEXT FOR LLM ---\n", context)
+#     # You would need to load your df here for standalone testing
+#     # df = load_and_transform_data() # This wouldn't work anymore without importing data_loader
+#     # df = ... # Load your processed df somehow
+#     # se = initialize_search_engine(df, force_rebuild=True)
+#     # query = "economic dependency Russia Ethiopia"
+#     # results = se.hybrid_search(query, top_k=3)
+#     # print(results[['display_headline', 'combined_score']])
+#     # context = se.get_context_for_llm(query, top_k=3)
+#     # print("\n--- CONTEXT FOR LLM ---\n", context)
