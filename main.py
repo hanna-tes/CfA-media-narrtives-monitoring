@@ -393,7 +393,7 @@ if 'search_engine' in st.session_state:
                             # Choose a model, e.g., 'llama3-8b-8192', 'gemma-7b-it', 'mixtral-8x7b-32768'
                             chat_completion = client.chat.completions.create(
                                 messages=messages,
-                                model="llama3-8b-8192", # You can change this model name as needed
+                                model="llama-3.1-8b-instant", # Updated model ID
                                 temperature=0.3, # Adjust creativity (0.0 = deterministic, 1.0 = creative)
                                 max_tokens=1024, # Limit the length of the response
                             )
