@@ -5,25 +5,26 @@ import re
 import numpy as np 
 from urllib.parse import urlparse, urljoin
 
+# --- MUST BE THE FIRST STREAMLIT COMMAND ---
+st.set_page_config(page_title="Vulnerability Index Tool", layout="wide")
+
 try:
     from weasyprint import HTML
     PDF_AVAILABLE = True
 except ImportError:
     PDF_AVAILABLE = False
-# NOTE: The following libraries are REQUIRED for the real scraping logic provided by the user.
-# If running in a restricted environment (like a code interpreter), these operations will fail.
+
 try:
     import requests
     from bs4 import BeautifulSoup
 except ImportError:
-    st.error("Missing libraries: Please install 'requests' and 'beautifulsoup4' (`pip install requests beautifulsoup4`) to enable image scraping.")
+    st.error("Missing libraries: Please install 'requests' and 'beautifulsoup4' to enable image scraping.")
     requests = None
     BeautifulSoup = None
 
 # --- SCRAPER FUNCTIONS ---
 
 def fetch_og_image(url, timeout=10):
-    """Fetch Open Graph image from article URL."""
     if not requests or not BeautifulSoup:
         return None
     if not url or not isinstance(url, str) or not url.startswith(('http://', 'https://')):
@@ -34,17 +35,13 @@ def fetch_og_image(url, timeout=10):
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # Try og:image first
         og_image = soup.find('meta', property='og:image')
         if og_image and og_image.get('content'):
             img_url = og_image['content']
             if img_url.startswith('//'):
                 img_url = 'https:' + img_url
-            elif img_safe := og_image.get('content'):
-                img_url = img_safe
             return img_url
 
-        # Fallback: first <img> in main content
         main_content = soup.find('article') or soup.find('main') or soup.find('div', class_='content')
         if main_content:
             img_tag = main_content.find('img')
@@ -55,17 +52,6 @@ def fetch_og_image(url, timeout=10):
                 elif img_url.startswith('/'):
                     img_url = urljoin(url, img_url)
                 return img_url
-
-        # Last resort: any <img>
-        img_tag = soup.find('img')
-        if img_tag and img_tag.get('src'):
-            img_url = img_tag['src']
-            if img_url.startswith('//'):
-                img_url = 'https:' + img_url
-            elif img_url.startswith('/'):
-                img_url = urljoin(url, img_url)
-            return img_url
-
     except Exception:
         pass
     return None
@@ -77,7 +63,7 @@ def is_valid_image_url(url):
     blocked = ['logo', 'ad.', 'banner', 'sponsor', 'doubleclick', 'gif', 'svg', 'png?size=', 'taboola', 'youtube', 'favicon', '.ico']
     return all(word not in url_lower for word in blocked)
 
-# --- IMPORT FROM DATA_LOADER (vulnerability + enrichment) ---
+# --- DATA IMPORTS ---
 from data_loader import (
     load_and_transform_data,
     enrich_with_scraping_and_llm,
@@ -89,62 +75,29 @@ from data_loader import (
     COUNTRIES as VULN_COUNTRIES,
     ACTORS as VULN_ACTORS
 )
-
-# --- IMPORT FROM SEARCH_ENGINE (for chatbot) ---
 from search_engine import initialize_search_engine, HybridSearchEngine
 
-# --- NAME MAPPING ---
+# --- MAPPINGS ---
 ACTOR_MAP = {
-    "France": "France",
-    "Russia": "Russia",
-    "China": "China",
-    "Turkey": "Turkey",
-    "Rwanda": "Rwanda",
-    "US": "UnitedStates",
-    "USA": "UnitedStates",
-    "United States": "UnitedStates",
-    "UAE": "UAE",
-    "Saudi Arabia": "Saudi",
-    "Saudi": "Saudi",
-    "Iran": "Iran",
-    "Israel": "Israel",
-    "Non-State": "NonState",
-    "NonState": "NonState",
+    "France": "France", "Russia": "Russia", "China": "China", "Turkey": "Turkey",
+    "Rwanda": "Rwanda", "US": "UnitedStates", "USA": "UnitedStates", "United States": "UnitedStates",
+    "UAE": "UAE", "Saudi Arabia": "Saudi", "Saudi": "Saudi", "Iran": "Iran",
+    "Israel": "Israel", "Non-State": "NonState", "NonState": "NonState",
 }
 
 COUNTRY_MAP = {
-    "DRC": "DRC",
-    "Democratic Republic of the Congo": "DRC",
-    "Senegal": "Senegal",
-    "Ethiopia": "Ethiopia",
-    "Cote d'Ivoire": "CoteIvoire",
-    "Côte d'Ivoire": "CoteIvoire",
+    "DRC": "DRC", "Democratic Republic of the Congo": "DRC", "Senegal": "Senegal",
+    "Ethiopia": "Ethiopia", "Cote d'Ivoire": "CoteIvoire", "Côte d'Ivoire": "CoteIvoire",
     "Ivory Coast": "CoteIvoire",
 }
 
-# --- STRATEGIC INTENT ---
-REAL_INTENTS_IN_DATA = [
-    "Economic Dependency", "Economic Impact",
-    "Sovereignty Erosion", "Diplomatic Influence",
-    "LGBTQI+ Rights Intervention",
-    "Religious Polarisation",
-    "Resource Control",
-    "Information Warfare"
-]
-
-# Map dataset values → vulnerability keys
 INTENT_TO_VULN_KEY = {
-    "Economic Dependency": "Economic",
-    "Economic Impact": "Economic",
-    "Sovereignty Erosion": "Sovereignty",
-    "Diplomatic Influence": "Sovereignty",
-    "LGBTQI+ Rights Intervention": "LGBTQ",
-    "Religious Polarisation": "Religious",
-    "Resource Control": "ResourceDependency",
-    "Information Warfare": "SocialFragility"
+    "Economic Dependency": "Economic", "Economic Impact": "Economic",
+    "Sovereignty Erosion": "Sovereignty", "Diplomatic Influence": "Sovereignty",
+    "LGBTQI+ Rights Intervention": "LGBTQ", "Religious Polarisation": "Religious",
+    "Resource Control": "ResourceDependency", "Information Warfare": "SocialFragility"
 }
 
-# For UI: use grouped labels 
 UI_LABEL_FOR_KEY = {
     "Economic": "Economic Dependency / Impact",
     "Sovereignty": "Sovereignty Erosion / Diplomatic Influence",
@@ -163,49 +116,45 @@ def get_influence_baseline_score(actor, country, intent_key):
     if c_norm not in VULN_COUNTRIES:
         return 0.0
     if intent_key == "All":
-        scores = []
-        for i in CA:
-            if a_norm in CA[i] and c_norm in CA[i][a_norm]:
-                scores.append(CA[i][a_norm][c_norm])
+        scores = [CA[i][a_norm][c_norm] for i in CA if a_norm in CA[i] and c_norm in CA[i][a_norm]]
         return sum(scores) / len(scores) if scores else 0.0
-    else:
-        return CA.get(intent_key, {}).get(a_norm, {}).get(c_norm, 0.0)
+    return CA.get(intent_key, {}).get(a_norm, {}).get(c_norm, 0.0)
 
-# --- STREAMLIT APP LAYOUT ---
+# --- UI ASSETS ---
+NEW_BACKGROUND_URL = "https://media.istockphoto.com/id/1502033887/vector/beige-gray-grainy-gradient-background-poster-backdrop-noise-texture-webpage-header-wide.jpg?s=612x612&w=0&k=20&c=eGwiA8zZ4cobGeMz5QeRs5zKzlp1Rr-BcROwT4S22y0="
+BRIGHT_LOGO_URL = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/main/CFA_Logo.png"
 
-# ✅ FIXED: Removed trailing spaces in URLs
-NEW_BACKGROUND_URL = "https://media.istockphoto.com/id/1502033887/vector/beige-gray-grainy-gradient-background-poster-backdrop-noise-texture-webpage-header-wide.jpg?s=612x612&w=0&k=20&c=eGwiA8zZ4cobGeMz5QeRs5zKzlp1Rr-BcROwT4S22y0=  "
-BRIGHT_LOGO_URL = "https://raw.githubusercontent.com/hanna-tes/CfA-media-narrtives-monitoring/main/CFA_Logo.png  "
-
+# --- CUSTOM CSS ---
 st.markdown(f"""
 <style>
-/* -------------------- THEME AWARE STYLES -------------------- */
 .stApp {{
     background-image: url("{NEW_BACKGROUND_URL}");
     background-size: cover;
     background-attachment: fixed;
 }}
-/* Ensure main text elements use Streamlit's theme color for visibility */
-h1, h2, h3, h4, h5, h6, .stAlert p, .stMarkdown, .stPlotlyChart .modebar {{ 
-    color: #1a1a1a !important; 
+
+h1, h2, h3, .stMarkdown {{ color: #1a1a1a !important; }}
+
+.professional-header {{
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    padding: 20px 0;
+    margin-bottom: 10px;
+    border-bottom: 1px solid rgba(0,0,0,0.1);
 }}
 
-/* FIX: Ensure Metric Labels (small text above score) are dark and readable */
-.stMetric label, .stMetric .css-1ndc21z > div:first-child {{
-    color: #444444 !important; 
-    font-weight: bold;
-}}
-/* Ensure Metric Values (the large score numbers) are clearly visible */
-.stMetric .css-1ndc21z > div:last-child > div:first-child {{
-    color: #1a1a1a !important; 
-}}
-/* General text components using default text color (important for sidebars/select boxes) */
-.css-1d3w5av, .stText, .stSelectbox label, .stNumberInput label {{
-    color: var(--text-color) !important; 
+.chat-container {{
+    background: rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-radius: 18px;
+    padding: 25px;
+    margin: 20px 0;
+    border: none !important;
+    box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.07);
 }}
 
-
-/* -------------------- CARD-SPECIFIC STYLES (Always Dark) -------------------- */
 .card {{
     background: #1e1e1e; 
     color: #ffffff; 
@@ -213,39 +162,8 @@ h1, h2, h3, h4, h5, h6, .stAlert p, .stMarkdown, .stPlotlyChart .modebar {{
     padding: 20px;
     margin: 15px 0;
     box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-    transition: transform 0.2s;
 }}
-.card:hover {{
-    transform: translateY(-2px);
-    box-shadow: 0 6px 12px rgba(0,0,0,0.4);
-}}
-.image-container img {{
-    width: 180px;
-    height: auto;
-    object-fit: cover;
-    border-radius: 8px;
-    margin-right: 15px;
-}}
-.header {{
-    font-size: 1.2em;
-    font-weight: bold;
-    margin-bottom: 5px;
-}}
-.meta {{
-    font-size: 0.9em;
-    color: #aaa;
-    margin-bottom: 10px;
-}}
-.summary {{
-    font-size: 1em;
-    line-height: 1.6;
-    margin-bottom: 10px;
-}}
-.tags {{
-    display: flex;
-    gap: 10px;
-    margin-bottom: 10px;
-}}
+
 .tag {{
     background: #2a2a2a;
     color: #4ade80;
@@ -253,67 +171,35 @@ h1, h2, h3, h4, h5, h6, .stAlert p, .stMarkdown, .stPlotlyChart .modebar {{
     border-radius: 4px;
     font-size: 0.85em;
 }}
-.link {{
-    color: #60a5fa;
-    text-decoration: underline;
-}}
 
-/* --- Chat Container Styling --- */
-.chat-container {{
-    border: 1px solid #ddd;
-    border-radius: 10px;
-    padding: 1rem;
-    background-color: rgba(255, 255, 255, 0.8); /* Slightly transparent white */
-    margin-top: 1rem;
-    margin-bottom: 2rem;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-}}
-/* --- Smaller font for status messages --- */
-.small-text {{
-    font-size: 0.85em;
-    color: #777;
-}}
+.link {{ color: #60a5fa; text-decoration: underline; }}
+
+.stMetric label {{ color: #444 !important; font-weight: bold; }}
 </style>
 """, unsafe_allow_html=True)
 
-st.set_page_config(page_title="Vulnerability Index Tool", layout="wide")
-
-# 🖼️ Logo in header 
-st.image(BRIGHT_LOGO_URL, width=150)
-st.title("🌍 Vulnerability Index Tool")
-
-# --- LOAD DATA FIRST ---
-# Load base data
+# --- DATA LOADING ---
 with st.spinner("Loading dataset..."):
     df_base = load_and_transform_data()
 if df_base.empty:
     st.stop()
 
-# Enrich with scraping
-with st.spinner("Enriching articles (Scraping Images)..."):
+with st.spinner("Enriching articles..."):
     progress_bar = st.progress(0)
     status_text = st.empty()
-    def progress_callback(p, msg):
-        progress_bar.progress(min(p, 1.0))
-        status_text.text(msg)
-    df = enrich_with_scraping_and_llm(df_base, progress_callback=progress_callback)
+    df = enrich_with_scraping_and_llm(df_base, progress_callback=lambda p, m: (progress_bar.progress(min(p, 1.0)), status_text.text(m)))
 progress_bar.empty()
 status_text.empty()
 
-# ------------------ CREATE DISPLAY TEXT FROM article_text ------------------
 def create_display_text(df_in):
     df_out = df_in.copy()
-    
     def extract_summary_and_headline(text):
         if not isinstance(text, str) or not text.strip() or "No summary available" in text:
             return "Summary not available.", "No Headline"
         sentences = [s.strip() for s in re.split(r'[.!?]+', text) if s.strip()]
-        if not sentences:
-            return text[:100] + "...", "Article Snippet"
-        headline = sentences[0] + "."
+        headline = sentences[0] + "." if sentences else "Article Snippet"
         summary = headline + " " + sentences[1] + "." if len(sentences) > 1 else headline
         return summary, headline
-
     results = df_out['article_text'].apply(extract_summary_and_headline)
     df_out['llm_summary'] = [r[0] for r in results]
     df_out['display_headline'] = [r[1] for r in results]
@@ -321,278 +207,145 @@ def create_display_text(df_in):
 
 df = create_display_text(df)
 
-# --- INITIALIZE SEARCH ENGINE AFTER DATA LOADING ---
-# This happens once per session where the app starts fresh or session state is cleared
 if 'search_engine' not in st.session_state:
-    with st.spinner("Initializing Search Engine... This might take a moment."):
-        try:
-            # PASS THE 'df' VARIABLE HERE - it should be the final processed 'df' from main.py
-            st.session_state.search_engine = initialize_search_engine(df, force_rebuild=False) # <-- Corrected line
-            # st.success("Search Engine Ready!") # Hide this message
-        except Exception as e:
-            st.error(f"Error initializing search engine: {e}")
-            st.stop() # Stop execution if initialization fails
+    st.session_state.search_engine = initialize_search_engine(df)
 
-# --- CHATBOT SECTION (Moved to the top) ---
-st.header("🤖 Ask Insights from the Dashboard Data")
+# --- PROFESSIONAL HEADER & CHATBOT ---
+st.markdown(f"""
+<div class="professional-header">
+    <img src="{BRIGHT_LOGO_URL}" width="45" height="45">
+    <h2 style="margin:0; font-weight: 700; color: #1a1a1a;">Insights & Analysis</h2>
+</div>
+""", unsafe_allow_html=True)
 
-# Check if search engine is initialized (it should be now if we got here)
-if 'search_engine' in st.session_state:
-    # Initialize chat history in session state if not present
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-    # Create a container for the chat interface
-    with st.container():
-        st.markdown('<div class="chat-container">', unsafe_allow_html=True)
-        # Display chat messages from history on app rerun
-        for message in st.session_state.messages:
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
+with st.container():
+    st.markdown('<div class="chat-container">', unsafe_allow_html=True)
+    for message in st.session_state.messages:
+        avatar = BRIGHT_LOGO_URL if message["role"] == "assistant" else None
+        with st.chat_message(message["role"], avatar=avatar):
+            st.markdown(message["content"])
 
-        # Accept user input
-        if prompt := st.chat_input("Ask a question about the data..."):
-            # Add user message to chat history
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            # Display user message in chat message container
-            with st.chat_message("user"):
-                st.markdown(prompt)
+    if prompt := st.chat_input("Ask a question about the data..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        with st.chat_message("assistant", avatar=BRIGHT_LOGO_URL):
+            with st.spinner("Analyzing..."):
+                try:
+                    search_engine_instance = st.session_state.search_engine
+                    context_from_search = search_engine_instance.get_context_for_llm(prompt, top_k=5)
+                    from groq import Groq
+                    client = Groq(api_key=st.secrets["GROQ_API_KEY"])
+                    messages = [
+                        {"role": "system", "content": "You are an expert analyst. Answer the user query using the provided context."},
+                        {"role": "user", "content": f"Context:\n{context_from_search}\n\nQuery: '{prompt}'"}
+                    ]
+                    chat_completion = client.chat.completions.create(
+                        messages=messages, model="llama-3.1-8b-instant", temperature=0.3, max_tokens=1024,
+                    )
+                    llm_response = chat_completion.choices[0].message.content
+                    st.markdown(llm_response)
+                    st.session_state.messages.append({"role": "assistant", "content": llm_response})
+                except Exception as e:
+                    st.error(f"Error: {e}")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-            # Display assistant response in chat message container
-            with st.chat_message("assistant"):
-                with st.spinner("Searching and analyzing..."):
-                    try:
-                        # Use the search engine to get context
-                        search_engine_instance: HybridSearchEngine = st.session_state.search_engine
-                        context_from_search = search_engine_instance.get_context_for_llm(prompt, top_k=5) # Adjust top_k as needed
-
-                        # --- LLM Interaction using Groq API ---
-                        from groq import Groq # Import the Groq client
-
-                        # Initialize the Groq client using the API key from Streamlit secrets
-                        client = Groq(api_key=st.secrets["GROQ_API_KEY"])
-
-                        # Define the system prompt to set the LLM's role and instructions
-                        system_prompt = """
-                        You are an expert analyst explaining media narratives and vulnerability indices related to foreign influence in African countries.
-                        Your task is to analyze the provided context information and answer the user's query accurately and concisely.
-                        The context includes retrieved articles and potentially dashboard metrics related to the user's request.
-                        Provide clear, insightful explanations based solely on the information provided.
-                        If the context doesn't fully answer the query, say so clearly.
-                        Cite relevant articles from the retrieved list if possible.
-                        """
-
-                        # Prepare the messages for the LLM
-                        messages = [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": f"Context Information:\n{context_from_search}\n\nUser Query: '{prompt}'"}
-                        ]
-
-                        try:
-                            # Call the Groq API (using llama3/gemma models available on Groq)
-                            # Choose a model, e.g., 'llama3-8b-8192', 'gemma-7b-it', 'mixtral-8x7b-32768'
-                            chat_completion = client.chat.completions.create(
-                                messages=messages,
-                                model="llama-3.1-8b-instant", # Updated model ID
-                                temperature=0.3, # Adjust creativity (0.0 = deterministic, 1.0 = creative)
-                                max_tokens=1024, # Limit the length of the response
-                            )
-
-                            # Extract the response content from the API call
-                            llm_response = chat_completion.choices[0].message.content
-
-                        except Exception as api_error:
-                            # Handle potential API errors gracefully
-                            st.error(f"An error occurred with the Groq API: {api_error}")
-                            llm_response = f"Sorry, I encountered an issue processing your request with the AI model: {api_error}. Please try again."
-
-                        st.markdown(llm_response)
-                        # Add assistant response to chat history
-                        st.session_state.messages.append({"role": "assistant", "content": llm_response})
-
-                    except Exception as e:
-                        error_msg = f"An error occurred while processing your request: {e}"
-                        st.error(error_msg)
-                        # Optionally add error message to history
-                        st.session_state.messages.append({"role": "assistant", "content": error_msg})
-        st.markdown('</div>', unsafe_allow_html=True)
-
-# --- END CHATBOT SECTION ---
-
-# Sidebar filters (placed after chatbot if desired, or keep in sidebar)
+# --- SIDEBAR FILTERS ---
 with st.sidebar:
+    st.image(BRIGHT_LOGO_URL, width=150)
     st.title("🔍 Filters")
     selected_media = st.selectbox("Media Outlet", ["All"] + get_media_names())
     selected_country = st.selectbox("Target Country", ["All"] + get_countries())
     selected_actor = st.selectbox("Foreign Actor", ["All"] + get_actors())
     selected_intent_ui = st.selectbox("Strategic Intent", UI_INTENT_OPTIONS)
-    tones = ["All"] + sorted(df['tone'].dropna().unique())
-    selected_tone = st.selectbox("Tone", tones)
+    selected_tone = st.selectbox("Tone", ["All"] + sorted(df['tone'].dropna().unique()))
 
-# Apply filters
+# Apply Filters
 filtered = df.copy()
-if selected_media != "All":
-    filtered = filtered[filtered['media_outlet'] == selected_media]
-if selected_country != "All":
-    filtered = filtered[filtered['target_country'] == selected_country]
-if selected_actor != "All":
-    filtered = filtered[filtered['inferred_actor'] == selected_actor]
-
-# ✅ FIXED: Replace broken UI_INTENT_LABELS loop
+if selected_media != "All": filtered = filtered[filtered['media_outlet'] == selected_media]
+if selected_country != "All": filtered = filtered[filtered['target_country'] == selected_country]
+if selected_actor != "All": filtered = filtered[filtered['inferred_actor'] == selected_actor]
 if selected_intent_ui != "All":
-    # Reverse map: UI label → vulnerability key
-    vuln_key = None
-    for key, label in UI_LABEL_FOR_KEY.items():
-        if label == selected_intent_ui:
-            vuln_key = key
-            break
+    vuln_key = next((k for k, v in UI_LABEL_FOR_KEY.items() if v == selected_intent_ui), None)
     if vuln_key:
-        # Get all dataset values for this vulnerability key
         allowed_values = [k for k, v in INTENT_TO_VULN_KEY.items() if v == vuln_key]
         filtered = filtered[filtered['strategic_intent'].isin(allowed_values)]
+if selected_tone != "All": filtered = filtered[filtered['tone'] == selected_tone]
 
-if selected_tone != "All":
-    filtered = filtered[filtered['tone'] == selected_tone]
-
-# --- KPI Metrics ---
-st.header("📊 Key Indicators")
-
-current_article_count = len(filtered)
-previous_article_count = len(df) * 0.95 
-article_delta = current_article_count - previous_article_count
-article_delta_str = f"{article_delta:,.0f}"
-
-# Tone Score
-if 'tone' in filtered.columns:
-    tone_mapping = {
-        'Factual': 0.0, 'Sensationalist': -0.3, 'Cynical': -0.8, 'Alarmist': -1.0, 'Positive': 1.0, 'Neutral': 0.0
-    }
-    filtered['tone_clean'] = filtered['tone'].astype(str).str.title().str.strip()
-    filtered['tone_numeric'] = filtered['tone_clean'].map(tone_mapping).fillna(0)
-    current_tone_score = filtered['tone_numeric'].mean() if not filtered.empty else 0.0
-    tone_delta = current_tone_score - 0.1
-    tone_delta_str = f"{tone_delta:+.2f}"
-else:
-    current_tone_score = 0.0
-    tone_delta_str = "N/A"
-
-# --- CII DYNAMIC CALCULATION ---
-#  Use vuln_key from above
-if selected_intent_ui != "All":
-    selected_vuln_key_for_score = None
-    for key, label in UI_LABEL_FOR_KEY.items():
-        if label == selected_intent_ui:
-            selected_vuln_key_for_score = key
-            break
-    baseline_influence_score = get_influence_baseline_score(selected_actor, selected_country, selected_vuln_key_for_score)
-else:
-    baseline_influence_score = get_influence_baseline_score(selected_actor, selected_country, "All")
-
-final_influence_score = baseline_influence_score
-if baseline_influence_score > 0 and current_article_count > 0:
-    volume_factor = min(1.0, current_article_count / 100)
-    tone_factor = 1.0 - (current_tone_score / 2.0)
-    final_influence_score = min(1.0, baseline_influence_score * volume_factor * tone_factor)
-
-previous_influence_score = final_influence_score * (0.95 + (0.1 * (np.random.rand() - 0.5))) if final_influence_score > 0.05 else 0.0
-influence_delta = final_influence_score - previous_influence_score
-influence_delta_str = f"{influence_delta:+.2f}"
-
+# --- KPI METRICS ---
+st.header("📊 Dashboard Indicators")
 col1, col2, col3 = st.columns(3)
-with col1:
-    st.metric("Total Articles Analyzed", f"{current_article_count:,.0f}", article_delta_str)
-with col2:
-    st.metric("Average Tone Score (Sentiment)", f"{current_tone_score:.2f}", tone_delta_str, delta_color="inverse")
-with col3:
-    st.metric("Contextual Influence Index", f"{final_influence_score:.2f}", influence_delta_str, delta_color="inverse")
 
-# Alerts
-if selected_actor != "All" and selected_country != "All":
-    if final_influence_score >= 0.8:
-        st.error(f"🚨 **High Vulnerability Warning:** CII for **{selected_actor}** in **{selected_country}** is critically high ({final_influence_score:.2f}).")
-    elif final_influence_score >= 0.6:
-        st.warning(f"⚠️ **Moderate Vulnerability Alert:** CII is elevated ({final_influence_score:.2f}).")
+tone_mapping = {'Factual': 0.0, 'Sensationalist': -0.3, 'Cynical': -0.8, 'Alarmist': -1.0, 'Positive': 1.0, 'Neutral': 0.0}
+filtered['tone_numeric'] = filtered['tone'].astype(str).str.title().str.strip().map(tone_mapping).fillna(0)
+current_tone_score = filtered['tone_numeric'].mean() if not filtered.empty else 0.0
 
-# Explanation (collapsed by default)
-with st.expander("❓ Understanding the Dashboard Metrics", expanded=False):
-    st.markdown("""
-    ### 🔹 **Contextual Vulnerability Index (CVI)**
-    Combines **structural vulnerability** (debt, military, etc.) and **narrative activity** (volume, tone).
-    
-    ### 🔹 **Tone Score**
-    Ranges from **-1.0 (alarmist)** to **+1.0 (positive)**.
-    
-    ### 🔹 Formula
-    `CVI = Structural_Vulnerability × min(Volume/100, 1) × (1 - Tone/2)`
-    """)
+vuln_key_for_score = next((k for k, v in UI_LABEL_FOR_KEY.items() if v == selected_intent_ui), "All")
+baseline_score = get_influence_baseline_score(selected_actor, selected_country, vuln_key_for_score)
+final_cii = min(1.0, baseline_score * min(1.0, len(filtered)/100) * (1.0 - (current_tone_score/2.0)))
 
+with col1: st.metric("Total Articles", f"{len(filtered):,}")
+with col2: st.metric("Average Tone Score", f"{current_tone_score:.2f}")
+with col3: st.metric("Vulnerability Index (CII)", f"{final_cii:.2f}")
+
+# --- FANCY TRANSPARENT TREND CHART ---
 st.markdown("---")
-st.header("📈 Article Volume Trend")
-
 if 'posting_time' in filtered.columns and not filtered.empty:
     filtered['posting_time'] = pd.to_datetime(filtered['posting_time'], errors='coerce')
-    filtered.dropna(subset=['posting_time'], inplace=True)
-    time_series_data = filtered.resample('D', on='posting_time')['URL'].count().reset_index()
-    time_series_data.columns = ['Date', 'Article Count']
-    fig = px.line(time_series_data, x='Date', y='Article Count', title=f'Daily Volume: {selected_actor} in {selected_country}', template='plotly_dark')
-    fig.update_traces(mode='lines+markers')
+    time_series = filtered.dropna(subset=['posting_time']).resample('D', on='posting_time')['URL'].count().reset_index()
+    time_series.columns = ['Date', 'Count']
+    
+    # Customizing the chart to match the Glassmorphism UI
+    fig = px.line(time_series, x='Date', y='Count', title="Article Volume Trend")
+    fig.update_traces(line_color='#2E86AB', line_width=3, mode='lines+markers', marker=dict(size=8, color='#4ade80'))
+    fig.update_layout(
+        plot_bgcolor='rgba(0,0,0,0)',
+        paper_bgcolor='rgba(0,0,0,0)',
+        font_color='#1a1a1a',
+        xaxis=dict(showgrid=False, title="Date"),
+        yaxis=dict(showgrid=True, gridcolor='rgba(0,0,0,0.1)', title="Article Count"),
+        margin=dict(l=20, r=20, t=50, b=20)
+    )
     st.plotly_chart(fig, use_container_width=True)
-else:
-    st.markdown("<p style='text-align: center; color: #777;'>No time-series data available.</p>", unsafe_allow_html=True)
 
+# --- ARTICLE FEED ---
 st.markdown("---")
-st.write(f"### Showing **{len(filtered)}** of **{len(df)}** articles")
+st.write(f"### Article Feed ({len(filtered)})")
 
-# Pagination
 articles_per_page = 5
 total_pages = max(1, (len(filtered) - 1) // articles_per_page + 1)
-if "page" not in st.session_state:
-    st.session_state.page = 0
+if "page" not in st.session_state: st.session_state.page = 0
 start_idx = st.session_state.page * articles_per_page
-end_idx = start_idx + articles_per_page
-page_articles = filtered.iloc[start_idx:end_idx]
+page_articles = filtered.iloc[start_idx:start_idx + articles_per_page]
 
-# Display Articles
 for _, row in page_articles.iterrows():
-    summary_display = str(row.get('llm_summary', 'Summary extraction failed.'))
-    headline = str(row.get('display_headline', 'Article Snippet (No Headline)'))
-    image_url = str(row.get('urlToImage', ''))
-    display_image = image_url if image_url and image_url not in ['None', 'nan', ''] else 'https://placehold.co/400x200/cccccc/000000?text=No+Image  '
-    media = str(row.get('media_outlet', 'Unknown'))
-    tone = str(row.get('tone', 'N/A'))
-    intent = str(row.get('strategic_intent', 'N/A'))
-    posting_time = "Date Unknown"
-    if pd.notna(row.get('posting_time')):
-        try:
-            posting_time = pd.to_datetime(row['posting_time']).strftime('%Y-%m-%d %H:%M')
-        except:
-            pass
-
+    img_url = row.get('urlToImage', 'https://placehold.co/400x200/cccccc/000000?text=No+Image')
     st.markdown(f"""
     <div class="card">
-        <div style="display: flex; align-items: flex-start;">
-            <div class="image-container">
-                {f'<img src="{display_image}" alt="Article Image">' if 'No+Image' not in display_image else '<div style="width: 180px; height: 120px; background: #333; display: flex; align-items: center; justify-content: center; border-radius: 8px;">No Image</div>'}
-            </div>
+        <div style="display: flex; gap: 20px;">
+            <img src="{img_url}" style="width: 170px; height: 110px; object-fit: cover; border-radius: 8px;">
             <div style="flex: 1;">
-                <div class="header">{headline}</div>
-                <div class="meta">Source: {media} – {posting_time}</div>
-                <div class="summary">{summary_display}</div>
-                <div class="tags">
-                    <span class="tag">Tone: {tone}</span>
-                    <span class="tag">Intent: {intent}</span>
+                <div style="font-weight: bold; font-size: 1.1em; margin-bottom: 5px;">{row.get('display_headline')}</div>
+                <div style="font-size: 0.85em; color: #aaa; margin-bottom: 10px;">Source: {row.get('media_outlet')}</div>
+                <div style="font-size: 0.95em; margin-bottom: 10px;">{row.get('llm_summary')}</div>
+                <div style="display: flex; gap: 10px;">
+                    <span class="tag">Tone: {row.get('tone')}</span>
+                    <span class="tag">Intent: {row.get('strategic_intent')}</span>
                 </div>
-                <a href="{row.get('URL', '#')}" target="_blank" class="link">🔗 Read full article</a>
+                <br><a href="{row.get('URL', '#')}" target="_blank" class="link">Read More 🔗</a>
             </div>
         </div>
     </div>
     """, unsafe_allow_html=True)
 
-# Pagination Controls
-col1, col2, col3 = st.columns([1, 2, 1])
-with col1:
-    st.button("⬅ Previous", on_click=lambda: st.session_state.update(page=max(0, st.session_state.page - 1)), disabled=(st.session_state.page == 0))
-with col2:
-    st.markdown(f"<h5 style='text-align: center;'>Page {st.session_state.page + 1} of {total_pages}</h5>", unsafe_allow_html=True)
-with col3:
-    st.button("Next ➡", on_click=lambda: st.session_state.update(page=min(total_pages - 1, st.session_state.page + 1)), disabled=(st.session_state.page >= total_pages - 1))
+c1, c2, c3 = st.columns([1, 2, 1])
+if c1.button("⬅ Previous", disabled=st.session_state.page == 0):
+    st.session_state.page -= 1
+    st.rerun()
+c2.markdown(f"<p style='text-align: center;'>Page {st.session_state.page + 1} of {total_pages}</p>", unsafe_allow_html=True)
+if c3.button("Next ➡", disabled=st.session_state.page >= total_pages - 1):
+    st.session_state.page += 1
+    st.rerun()
