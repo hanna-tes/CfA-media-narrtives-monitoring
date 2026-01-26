@@ -5,11 +5,11 @@ import re
 import numpy as np 
 from urllib.parse import urlparse, urljoin
 
-try:
-    from weasyprint import HTML
-    PDF_AVAILABLE = True
-except ImportError:
-    PDF_AVAILABLE = False
+#try:
+ #   from weasyprint import HTML
+ #   PDF_AVAILABLE = True
+#except ImportError:
+    #PDF_AVAILABLE = False
 # NOTE: The following libraries are REQUIRED for the real scraping logic provided by the user.
 # If running in a restricted environment (like a code interpreter), these operations will fail.
 try:
